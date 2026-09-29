@@ -27,7 +27,8 @@ else
 fi
 stamp built
 chown -R u /w /snaidhm-copy
-echo "--- build"; tail -30 /tmp/build.log 2>/dev/null
+# Errors come first: keep the head, where the root cause is.
+echo "--- build"; head -120 /tmp/build.log 2>/dev/null
 if [ $BUILD = ok ]; then
   . /t/session.sh
   . /bench/lib.sh

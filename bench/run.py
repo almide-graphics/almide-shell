@@ -135,7 +135,7 @@ def section(log, name):
 
 def problem_of(res, log):
     if res["build"] != "ok":
-        return "The build failed:\n\n" + section(log, "build")[-3000:]
+        return "The build failed:\n\n" + section(log, "build")[:6000]
     if res["runs"] != "ok":
         return "It built, but the bar did not start (no bar on screen). Its output:\n\n" + section(log, "shell log")[-3000:]
     if res["task"] != "pass":
@@ -174,7 +174,14 @@ def run(args):
                 attempts = []
                 prompt, reply = p1, None
                 for n in (1, 2):
-                    wd = fresh_workdir(os.path.join(base, f"attempt{n}"), lang)
+                    # A retry changes what the first attempt left, as a user's
+                    # next request would: files the reply leaves out stay as
+                    # they were, not as the baseline had them.
+                    wd = os.path.join(base, f"attempt{n}")
+                    if n == 1:
+                        fresh_workdir(wd, lang)
+                    else:
+                        shutil.copytree(os.path.join(base, "attempt1"), wd)
                     try:
                         reply = ask(args.model, prompt)
                     except Exception as e:  # a failed call is recorded, not scored
@@ -248,7 +255,14 @@ def rescore(args):
             base = os.path.join(out, "work", r["task"], r["lang"], str(r["trial"]))
             new = []
             for n, old in enumerate(r["attempts"], 1):
-                res, log = verify(os.path.join(base, f"attempt{n}"), r["lang"], r["task"])
+                wd = os.path.join(base, f"attempt{n}")
+                if n > 1:
+                    # Rebuilt as the retry should have been: the first
+                    # attempt's files, then the retry's reply.
+                    shutil.rmtree(wd, ignore_errors=True)
+                    shutil.copytree(os.path.join(base, "attempt1"), wd)
+                    apply_reply(wd, r["lang"], open(os.path.join(base, f"reply{n}.md")).read())
+                res, log = verify(wd, r["lang"], r["task"])
                 open(os.path.join(base, f"verify{n}.rescored.log"), "w").write(log)
                 res["changed"] = old.get("changed", [])
                 new.append(res)

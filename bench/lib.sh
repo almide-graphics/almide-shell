@@ -25,14 +25,24 @@ bar_png() {
 
 # The bar's text, read with OCR (on a light-on-dark bar: negated, enlarged).
 ocr_prep() { convert /tmp/bar.png -negate -resize 200% /tmp/bar-ocr.png; }
-# Read twice — negated for light text on the dark bar, as is for dark text on
-# a light highlight — and both readings returned. OCR may drop the space
-# between words, so checks match spaces as optional (" ?").
+# Read several ways — negated for light text on the dark bar, as is for dark
+# text on a light highlight, enlarged 2x and 3x, as one line and as a block —
+# and every reading returned, " | " between: one misreading (a dropped word,
+# "422%" for "42%") does not decide a check. OCR may drop the space between
+# words, so checks match spaces as optional (" ?").
 bar_text() {
   bar_png && ocr_prep || return 1
   convert /tmp/bar.png -resize 200% /tmp/bar-plain.png
-  { tesseract /tmp/bar-ocr.png - --psm 7; echo " | "; tesseract /tmp/bar-plain.png - --psm 7; } 2>/dev/null | tr '\n' ' '
+  convert /tmp/bar.png -negate -resize 300% /tmp/bar-ocr3.png
+  convert /tmp/bar.png -colorspace gray -negate -resize 300% -threshold 55% /tmp/bar-bw.png
+  {
+    tesseract /tmp/bar-ocr.png - --psm 7; echo " | "
+    tesseract /tmp/bar-plain.png - --psm 7; echo " | "
+    tesseract /tmp/bar-ocr3.png - --psm 6; echo " | "
+    tesseract /tmp/bar-bw.png - --psm 7
+  } 2>/dev/null | tr '\n' ' '
 }
+
 # Words with where they start: "LEFT_PX WORD" per line, in bar pixels.
 bar_words() {
   bar_png && ocr_prep && tesseract /tmp/bar-ocr.png - --psm 7 tsv 2>/dev/null |
@@ -46,9 +56,10 @@ pixel() { convert /tmp/screen.png -crop "1x1+$1+$2" -depth 8 txt:- | tail -1 | g
 # How many pixels of the bar are colour rrggbb (within a little, for
 # anti-aliasing), optionally only in bar-pixel columns [X0, X1).
 count_colour() {
+  local fuzz=${FUZZ:-6%}
   local region=/tmp/bar.png
   if [ $# -ge 3 ]; then convert /tmp/bar.png -crop "$(( $3 - $2 ))x10000+$2+0" +repage /tmp/bar-part.png; region=/tmp/bar-part.png; fi
-  convert "$region" -fuzz 6% -fill white -opaque "#$1" -fill black +opaque white -format '%[fx:int(mean*w*h+0.5)]' info:
+  convert "$region" -fuzz "$fuzz" -fill white -opaque "#$1" -fill black +opaque white -format '%[fx:int(mean*w*h+0.5)]' info:
 }
 
 # The pointer, driven through the compositor: click / right-click / wheel at
