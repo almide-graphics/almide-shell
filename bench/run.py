@@ -23,13 +23,14 @@ import argparse, datetime, json, os, re, shutil, subprocess, sys, tempfile
 BENCH = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(BENCH)
 TASKS = os.path.join(BENCH, os.environ.get("BENCH_TASKS", "tasks"))
+BASELINE = os.path.join(BENCH, os.environ.get("BENCH_BASELINE", "baseline"))
 DOCKER = ["docker", "--context", os.environ.get("BENCH_CONTEXT", "colima-bench")]
 LANG_NAME = {"almide": "Almide", "qml": "QML (Quickshell)"}
 SOURCE_EXT = {"almide": (".almd",), "qml": (".qml", ".js")}
 
 
 def baseline_files(lang):
-    base = os.path.join(BENCH, "baseline", lang)
+    base = os.path.join(BASELINE, lang)
     out = {}
     for dirpath, _, names in os.walk(base):
         for n in sorted(names):
@@ -144,7 +145,7 @@ def problem_of(res, log):
 
 
 def fresh_workdir(root, lang):
-    shutil.copytree(os.path.join(BENCH, "baseline", lang), root)
+    shutil.copytree(os.path.join(BASELINE, lang), root)
     return root
 
 
@@ -284,7 +285,7 @@ def verify_refs(args):
     bad = []
     for task in tasks:
         for lang in args.langs.split(","):
-            for kind in ("baseline", "ref"):
+            for kind in (("baseline",) if args.baseline_only else ("baseline", "ref")):
                 ref = os.path.join(TASKS, task, "ref", lang)
                 if kind == "ref" and not os.path.isdir(ref):
                     bad.append(f"{task} {lang}: no reference")
@@ -313,6 +314,7 @@ if __name__ == "__main__":
     ap.add_argument("--reference", default=os.path.join(os.path.dirname(os.path.dirname(ROOT)), "almide", "almide", "docs", "CHEATSHEET.md"))
     ap.add_argument("--verify-refs", action="store_true")
     ap.add_argument("--rescore", action="store_true")
+    ap.add_argument("--baseline-only", action="store_true", help="with --verify-refs: only that the unchanged bar fails every check")
     a = ap.parse_args()
     os.makedirs(os.path.join(BENCH, "results"), exist_ok=True)
     sys.exit(verify_refs(a) if a.verify_refs else rescore(a) if a.rescore else run(a))

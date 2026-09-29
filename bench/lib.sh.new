@@ -23,37 +23,8 @@ bar_png() {
   convert /tmp/screen.png -crop "$((BW * SCALE))x$((BH * SCALE))+$((BX * SCALE))+$((BY * SCALE))" +repage /tmp/bar.png
 }
 
-# Wait until the bar has stopped changing — its first frames may be drawn
-# before the output's scale reached it, or mid-layout — up to 10 s: two
-# captures a second apart that match.
-settle() {
-  local prev=""
-  for i in $(seq 10); do
-    bar_png || { sleep 1; continue; }
-    local sum=$(md5sum < /tmp/bar.png)
-    [ "$sum" = "$prev" ] && return 0
-    prev=$sum
-    sleep 1
-  done
-}
-
-# The bar's text, read with OCR: grey, levelled so dim text (#565f89 on
-# #1a1b26) is as bright as the rest, negated to dark on light, enlarged.
-ocr_prep() { convert /tmp/bar.png -colorspace gray -level 0%,45% -negate -resize 200% /tmp/bar-ocr.png; }
-
-# The highlight's own text (dark on the accent colour), cut out and read on
-# its own: in the whole bar it is the reverse polarity of everything else.
-box_text() {
-  local g
-  # The largest accent-coloured region: the highlight, not a stray
-  # anti-aliased pixel of the same colour elsewhere.
-  g=$(convert /tmp/bar.png -fuzz 3% -fill white -opaque "#7aa2f7" -fill black +opaque white \
-      -define connected-components:verbose=true -connected-components 8 null: 2>/dev/null |
-    awk '$NF ~ /255,255,255|gray\(255\)/ { split($2, g, /[x+]/); if ($4 > best) { best = $4; box = $2 } } END { print box }')
-  case "$g" in ""|1x1*) return 0 ;; esac
-  convert /tmp/bar.png -crop "$g" +repage -shave 8x6 -colorspace gray -resize 400% -bordercolor white -border 30 /tmp/bar-box.png
-  tesseract /tmp/bar-box.png - --psm 7 2>/dev/null | tr '\n' ' '
-}
+# The bar's text, read with OCR (on a light-on-dark bar: negated, enlarged).
+ocr_prep() { convert /tmp/bar.png -negate -resize 200% /tmp/bar-ocr.png; }
 # Read several ways — negated for light text on the dark bar, as is for dark
 # text on a light highlight, enlarged 2x and 3x, as one line and as a block —
 # and every reading returned, " | " between: one misreading (a dropped word,
@@ -68,8 +39,7 @@ bar_text() {
     tesseract /tmp/bar-ocr.png - --psm 7; echo " | "
     tesseract /tmp/bar-plain.png - --psm 7; echo " | "
     tesseract /tmp/bar-ocr3.png - --psm 6; echo " | "
-    tesseract /tmp/bar-bw.png - --psm 7; echo " | "
-    box_text
+    tesseract /tmp/bar-bw.png - --psm 7
   } 2>/dev/null | tr '\n' ' '
 }
 
@@ -86,10 +56,9 @@ pixel() { convert /tmp/screen.png -crop "1x1+$1+$2" -depth 8 txt:- | tail -1 | g
 # How many pixels of the bar are colour rrggbb (within a little, for
 # anti-aliasing), optionally only in bar-pixel columns [X0, X1).
 count_colour() {
-  local fuzz=${FUZZ:-6%}
   local region=/tmp/bar.png
   if [ $# -ge 3 ]; then convert /tmp/bar.png -crop "$(( $3 - $2 ))x10000+$2+0" +repage /tmp/bar-part.png; region=/tmp/bar-part.png; fi
-  convert "$region" -fuzz "$fuzz" -fill white -opaque "#$1" -fill black +opaque white -format '%[fx:int(mean*w*h+0.5)]' info:
+  convert "$region" -fuzz 6% -fill white -opaque "#$1" -fill black +opaque white -format '%[fx:int(mean*w*h+0.5)]' info:
 }
 
 # The pointer, driven through the compositor: click / right-click / wheel at

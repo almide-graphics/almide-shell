@@ -1,0 +1,6 @@
+[package]
+name = "almide_bar"
+version = "0.0.1"
+
+[dependencies]
+snaidhm = { path = "/snaidhm-copy" }
