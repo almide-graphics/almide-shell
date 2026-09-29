@@ -11,6 +11,7 @@ set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 SNAIDHM_SRC=${SNAIDHM_SRC:-$(cd "$ROOT/../snaidhm" && pwd)}
+CEANGAL_SRC=${CEANGAL_SRC:-$(cd "$ROOT/../ceangal" 2>/dev/null && pwd)}
 docker build -q -t almide-shell-hypr "$HERE" >/dev/null
 if [ -n "${ALMIDE_SRC:-}" ]; then
   docker volume create almide-build >/dev/null
@@ -21,4 +22,5 @@ fi
 docker run --rm -it --dns 1.1.1.1 --privileged -e SCALE="${SCALE:-1}" -p 6080:6080 -p 5900:5900 \
   -v /dev/dri:/dev/dri -v /run/udev:/run/udev:ro \
   -v "$ROOT":/shell:ro -v "$SNAIDHM_SRC":/snaidhm:ro -v almide-build:/almide -v "$HERE":/t:ro \
+  ${CEANGAL_SRC:+-v "$CEANGAL_SRC":/ceangal:ro} \
   almide-shell-hypr /t/desktop.sh
