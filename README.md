@@ -28,6 +28,14 @@ a desktop shell is code people already hand to LLMs every day.
 
 Not in scope: the compositor (Hyprland stays), GPU rendering.
 
+## Try it
+
+Without Hyprland on your machine: `test/hyprland/try.sh` runs Hyprland in
+Docker with the bar, notifications, OSD and launcher, and shows its screen in a
+browser at <http://localhost:6080/vnc.html?autoconnect=1&resize=scale>.
+Alt+Space opens the launcher, Alt+Enter a terminal, Alt+↑/↓/M the volume,
+Alt+N sends a notification, Alt+1..4 switches workspaces.
+
 ## Status: M1
 
 `almide run main.almd` under Hyprland (or any compositor with wlr-layer-shell)

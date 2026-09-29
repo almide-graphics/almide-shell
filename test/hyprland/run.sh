@@ -30,5 +30,5 @@ docker run --rm $DNS -v "$ALMIDE_SRC":/src:ro -v almide-build:/almide almide-she
 mkdir -p "$OUT"
 docker run --rm $DNS --privileged -e SCALE="${SCALE:-2}" -v /dev/dri:/dev/dri -v /run/udev:/run/udev:ro \
   -v "$ROOT":/shell:ro -v "$SNAIDHM_SRC":/snaidhm:ro -v almide-build:/almide -v "$OUT":/out \
-  -v "$HERE/capture.sh":/capture.sh:ro almide-shell-hypr /capture.sh /out/bar.png
+  -v "$HERE":/t:ro almide-shell-hypr /t/capture.sh /out/bar.png
 echo "saved $OUT/before-click.png and $OUT/bar.png"
