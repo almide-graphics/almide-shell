@@ -13,8 +13,9 @@ rm -f /w/almide.lock
 chown -R u /w /snaidhm-copy
 cd /w
 $ALMIDE build main.almd -o /tmp/bar 2>&1 | tail -1
+$ALMIDE build notifyd.almd -o /tmp/notifyd 2>&1 | tail -1
 (cd /snaidhm-copy && $ALMIDE build examples/wayland/main.almd -o /tmp/win 2>&1 | tail -1 && $ALMIDE build examples/wayland/drive.almd -o /tmp/drive 2>&1 | tail -1)
-chmod 755 /tmp/bar /tmp/win /tmp/drive
+chmod 755 /tmp/bar /tmp/notifyd /tmp/win /tmp/drive
 seatd -g video > /tmp/seatd.log 2>&1 &
 sleep 0.5
 mkdir -p /tmp/xdg && chown u /tmp/xdg && chmod 700 /tmp/xdg
@@ -27,6 +28,9 @@ misc {
 ecosystem {
   no_update_news = true
   no_donation_nag = true
+}
+animations {
+  enabled = false
 }
 general {
   gaps_out = 8
@@ -49,6 +53,7 @@ su u -c "$ENVS pw-cli create-node adapter '{ factory.name=support.null-audio-sin
 sleep 1
 su u -c "$ENVS wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.42; wpctl get-volume @DEFAULT_AUDIO_SINK@"
 su u -c "$ENVS /tmp/bar > /tmp/bar.log 2>&1 &"
+su u -c "$ENVS /tmp/notifyd > /tmp/notifyd.log 2>&1 &"
 sleep 1
 su u -c "$ENVS /tmp/win 20000 > /tmp/win1.log 2>&1 &"
 sleep 1
@@ -59,6 +64,16 @@ su u -c "$ENVS hyprctl dismissnotify >/dev/null; grim /out/before-click.png"
 su u -c "$ENVS /tmp/drive extent 1024 768 move 24 15 sleep 200 click sleep 300" >/dev/null
 sleep 1
 su u -c "$ENVS hyprctl dismissnotify >/dev/null; grim $OUT"
+# Notifications, through the bus as any app sends them.
+su u -c "$ENVS gdbus call --session --dest org.freedesktop.Notifications --object-path /org/freedesktop/Notifications --method org.freedesktop.Notifications.GetServerInformation"
+su u -c "$ENVS notify-send -t 20000 'Build finished' 'almide-shell: 12 tests passed in 3.1 s'"
+su u -c "$ENVS notify-send -t 20000 'メッセージ' '通知デーモンも Almide です。D-Bus のワイヤプロトコルから書いています。長い本文は折り返して表示されます。'"
+ID=$(su u -c "$ENVS notify-send -p -t 20000 'Will be closed' 'by CloseNotification'")
+sleep 0.5
+su u -c "$ENVS grim /out/notifications.png"
+su u -c "$ENVS gdbus call --session --dest org.freedesktop.Notifications --object-path /org/freedesktop/Notifications --method org.freedesktop.Notifications.CloseNotification $ID" >/dev/null
+sleep 0.5
+su u -c "$ENVS grim /out/after-close.png"
 # Idle cost: the bar's CPU time over 20 idle seconds (clock ticks per minute,
 # volume read every 5 s, battery every 30 s).
 BAR=$(pgrep -u u -x bar | head -1)
@@ -67,4 +82,5 @@ echo "idle: $((T1 - T0)) clock ticks of CPU in 20 s (of $((20 * $(getconf CLK_TC
 echo "rss: $(awk '/VmRSS/{print $2, $3}' /proc/$BAR/status)"
 su u -c "$ENVS hyprctl activeworkspace -j" | grep '"id"' | head -1
 echo "--- bar"; cat /tmp/bar.log
+echo "--- notifyd"; cat /tmp/notifyd.log
 echo "--- hypr errors"; grep -i -E "error|crash" /tmp/hypr.log | head -5

@@ -1,0 +1,53 @@
+// dbus: marshalling as the spec lays it out, and messages round-tripped.
+// (Interoperability with a real bus — dbus-daemon, gdbus, notify-send — is
+// what test/hyprland/capture.sh exercises.)
+
+import self.dbus as dbus
+
+test "signatures" {
+  assert_eq(dbus.signature(dbus.Array("s", []: List[dbus.Arg])), "as")
+  assert_eq(dbus.signature(dbus.Array("{sv}", []: List[dbus.Arg])), "a{sv}")
+  assert_eq(dbus.signature(dbus.Struct([dbus.Str("a"), dbus.UInt32(1)])), "(su)")
+  assert_eq(dbus.split_types("susssasa{sv}i"), ["s", "u", "s", "s", "s", "as", "a{sv}", "i"])
+}
+
+test "alignment counts from the message start" {
+  // A byte, then a u32: three bytes of padding.
+  let b = dbus.put(dbus.put(bytes.new(0), dbus.Byte(7)), dbus.UInt32(0x01020304))
+  assert_eq(bytes.to_list(b), [7, 0, 0, 0, 4, 3, 2, 1])
+  // A string: its length, its bytes, a NUL.
+  assert_eq(bytes.to_list(dbus.put(bytes.new(0), dbus.Str("hi"))), [2, 0, 0, 0, 104, 105, 0])
+  // An array of int64 after a u32: the length excludes the padding to 8.
+  let a = dbus.put(bytes.new(0), dbus.Array("x", [dbus.Int64(1)]))
+  assert_eq(bytes.len(a), 16)
+  assert_eq(bytes.read_u32_le(a, 0), 8)
+}
+
+test "a Notify call round-trips" {
+  let hints = dbus.Array("{sv}", [dbus.DictEntry(dbus.Str("urgency"), dbus.Variant(dbus.Byte(2)))])
+  let body = [dbus.Str("app"), dbus.UInt32(0), dbus.Str(""), dbus.Str("Title"), dbus.Str("本文"),
+              dbus.Array("s", []: List[dbus.Arg]), hints, dbus.Int32(0 - 1)]
+  let m = { ...dbus.message(dbus.METHOD_CALL), serial: 5, path: "/org/freedesktop/Notifications",
+            interface: "org.freedesktop.Notifications", member: "Notify",
+            destination: "org.freedesktop.Notifications", body: body }
+  let b = dbus.encode(m)
+  assert_eq(dbus.message_len(b), bytes.len(b))
+  let back = dbus.decode(b)
+  assert_eq(back.member, "Notify")
+  assert_eq(back.serial, 5)
+  assert_eq(back.signature, "susssasa{sv}i")
+  assert_eq(dbus.str_of(back.body[4]), "本文")
+  assert_eq(dbus.int_of(back.body[7]), 0 - 1)
+  assert_eq(back.body[6], hints)
+}
+
+test "a partial message is not yet a message" {
+  let b = dbus.encode({ ...dbus.message(dbus.SIGNAL), serial: 1, path: "/a", interface: "x.y", member: "Z", body: [dbus.UInt32(3)] })
+  assert_eq(dbus.message_len(bytes.slice(b, 0, bytes.len(b) - 1)), 0)
+}
+
+test "bus addresses" {
+  assert_eq(dbus.address_path("unix:path=/run/user/1000/bus"), "/run/user/1000/bus")
+  assert_eq(dbus.address_path("unix:path=/tmp/b,guid=abc;tcp:host=x"), "/tmp/b")
+  assert_eq(dbus.address_path("tcp:host=x"), "")
+}

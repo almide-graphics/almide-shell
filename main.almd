@@ -41,7 +41,7 @@ effect fn refresh_workspaces(st: bar.State) -> Result[bar.State, String] =
 effect fn main() -> Unit = {
   let th = config.THEME
   let anchors = int.bor(int.bor(window.ANCHOR_TOP, window.ANCHOR_LEFT), window.ANCHOR_RIGHT)
-  if window.open_layer("almide-bar", window.LAYER_TOP, anchors, 0, th.height, th.height, 0)! then {
+  if window.open_layer("almide-bar", window.LAYER_TOP, anchors, 0, th.height, th.height, 0, 0)! then {
     let faces = fonts.system()!
     let zone = tz.system()!
     let events = hypr.events() ?? (0 - 1)

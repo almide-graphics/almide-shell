@@ -1,0 +1,125 @@
+// almide-shell notifyd — the notification daemon
+//
+//   almide run notifyd.almd
+//
+// Owns org.freedesktop.Notifications on the session bus (the spec's Notify,
+// CloseNotification, GetCapabilities, GetServerInformation, and the
+// NotificationClosed signal) and shows each notification as a card at the
+// top right, over windows, until it expires or is clicked.
+
+import env
+import net
+import snaidhm.sfnt as sfnt
+import snaidhm.wayland.window as window
+import snaidhm.native.fonts as fonts
+import self.dbus as dbus
+import self.notify as notify
+
+let PATH = "/org/freedesktop/Notifications"
+let IFACE = "org.freedesktop.Notifications"
+let DEFAULT_TIMEOUT = 5000
+
+var notes: List[notify.Note] = []
+var next_id = 1
+
+/// Remove notification `id`, telling its sender why (1 expired, 2 dismissed,
+/// 3 closed by a call).
+effect fn close(id: Int, reason: Int) -> Result[Unit, String] = {
+  if notes |> list.any((n) => n.id == id) then {
+    notes = notes |> list.filter((n) => n.id != id)
+    dbus.signal(PATH, IFACE, "NotificationClosed", [dbus.UInt32(id), dbus.UInt32(reason)])!
+  } else ()
+  ok(())
+}
+
+effect fn handle(m: dbus.Message, now: Int) -> Result[Unit, String] = {
+  if m.kind != dbus.METHOD_CALL then ok(())
+  else if m.interface == IFACE and m.member == "Notify" then {
+    // Notify(app_name s, replaces_id u, app_icon s, summary s, body s,
+    //        actions as, hints a{sv}, expire_timeout i) -> id u
+    let b = m.body
+    let replaces = dbus.int_of(b[1])
+    let id = if replaces > 0 and notes |> list.any((n) => n.id == replaces) then replaces else {
+      let fresh = next_id
+      next_id = next_id + 1
+      fresh
+    }
+    let timeout = dbus.int_of(b[7])
+    let ms = if timeout < 0 then DEFAULT_TIMEOUT else timeout
+    let note: notify.Note = {
+      id: id, app: dbus.str_of(b[0]), summary: dbus.str_of(b[3]), body: dbus.str_of(b[4]),
+      expires_at: if ms == 0 then 0 else now + ms,
+    }
+    notes = (notes |> list.filter((n) => n.id != id)) + [note]
+    dbus.reply(m, [dbus.UInt32(id)])
+  } else if m.interface == IFACE and m.member == "CloseNotification" then {
+    close(dbus.int_of(m.body[0]), 3)!
+    dbus.reply(m, [])
+  } else if m.interface == IFACE and m.member == "GetCapabilities" then {
+    dbus.reply(m, [dbus.Array("s", [dbus.Str("body")])])
+  } else if m.interface == IFACE and m.member == "GetServerInformation" then {
+    dbus.reply(m, [dbus.Str("almide-shell"), dbus.Str("almide"), dbus.Str("0.0.1"), dbus.Str("1.2")])
+  } else if m.interface == "org.freedesktop.DBus.Peer" and m.member == "Ping" then {
+    dbus.reply(m, [])
+  } else {
+    dbus.reply_error(m, "org.freedesktop.DBus.Error.UnknownMethod", "${m.interface}.${m.member} is not handled")
+  }
+}
+
+/// Show the column of cards, or take it away when there are none.
+effect fn show(faces: List[sfnt.Font]) -> Result[Unit, String] = {
+  if list.len(notes) == 0 then {
+    if window.shown() then window.hide()! else ()
+  } else {
+    let h = notify.height(faces, notes)
+    if not window.shown() then {
+      let anchors = int.bor(window.ANCHOR_TOP, window.ANCHOR_RIGHT)
+      let _ = window.open_layer("almide-notifications", window.LAYER_OVERLAY, anchors, notify.WIDTH, h, 0, 0, notify.MARGIN)!
+    } else if window.height() != h then {
+      window.resize_layer(notify.WIDTH, h)!
+    } else ()
+    window.present(notify.render(faces, notes, window.width(), window.height()))!
+  }
+  ok(())
+}
+
+effect fn main() -> Unit = {
+  let me = dbus.connect()!
+  if not dbus.request_name("org.freedesktop.Notifications")! then {
+    println("another notification daemon owns org.freedesktop.Notifications")
+  } else {
+    println("notifyd on the session bus as ${me}")
+    let faces = fonts.system()!
+    // The Wayland connection opens with the first card.
+    var shown_key = ""
+    while true {
+      let now = env.millis()
+      // Sleep until a message, a click, or the next expiry.
+      let due = notes |> list.filter_map((n) => if n.expires_at > 0 then some(n.expires_at - now) else none)
+      let wait = match list.min(due) { some(d) => int.max(0, d), none => 0 - 1 }
+      let fds = if window.shown() then [dbus.fd(), window.fd()] else [dbus.fd()]
+      let _ = net.unix_wait(fds, wait)!
+      let t = env.millis()
+      for m in dbus.next(0)! { handle(m, t)! }
+      if window.shown() then {
+        let _ = window.pump(0)!
+        var kind = window.next_event()
+        while kind != window.NONE {
+          if kind == window.MOUSE_DOWN then {
+            let id = notify.hit(faces, notes, window.event_y())
+            if id > 0 then close(id, 2)! else ()
+          } else ()
+          kind = window.next_event()
+        }
+      } else ()
+      for n in notes {
+        if n.expires_at > 0 and n.expires_at <= t then close(n.id, 1)! else ()
+      }
+      let key = notes |> list.map((n) => int.to_string(n.id)) |> list.join(",")
+      if key != shown_key then {
+        show(faces)!
+        shown_key = key
+      } else ()
+    }
+  }
+}

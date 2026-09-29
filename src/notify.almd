@@ -1,0 +1,119 @@
+// almide-shell notify — notifications: what is showing, and how it looks
+//
+// The daemon (notifyd.almd) owns org.freedesktop.Notifications on the
+// session bus; each Notify call becomes a card in a column at the top right
+// of the output, until it expires, is clicked, or is closed by its sender.
+
+import snaidhm.cpu.canvas as canvas
+import snaidhm.sfnt as sfnt
+import self.bar as bar
+import self.config as config
+
+type Note = { id: Int, app: String, summary: String, body: String, expires_at: Int }
+
+let WIDTH = 380
+let CARD_GAP = 8
+let MARGIN = 10
+let PAD = 14.0
+
+fn codes(s: String) -> List[Int] = bar.text_codes(s)
+
+/// A character of the scripts written without spaces between words.
+fn wide(c: String) -> Bool = (string.codepoint(c) ?? 0) >= 0x2E80
+
+/// `text` broken into lines that fit `width` at `size` (at spaces; a word
+/// longer than the width, or text with no spaces — Japanese — at characters).
+fn wrap(faces: List[sfnt.Font], text: String, size: Float, width: Float) -> List[String] = {
+  let cs = string.chars(text)
+  let n = list.len(cs)
+  var lines: List[String] = []
+  var line = ""
+  var last_space = 0 - 1
+  var i = 0
+  while i < n {
+    let c = cs[i]
+    if c == "\n" then {
+      list.push(lines, line)
+      line = ""
+      last_space = 0 - 1
+    } else {
+      let next = line + c
+      if canvas.measure(faces, codes(next), size) <= width or line == "" then {
+        line = next
+        if c == " " then { last_space = string.len(line) - 1 } else ()
+      } else if wide(c) or (string.len(line) > 0 and wide(string.slice(line, string.len(line) - 1))) then {
+        // Text without spaces (Japanese, Chinese) breaks between characters.
+        list.push(lines, line)
+        line = c
+        last_space = 0 - 1
+      } else if last_space > 0 then {
+        list.push(lines, string.slice(line, 0, last_space))
+        line = string.slice(line, last_space + 1) + c
+        last_space = 0 - 1
+      } else {
+        list.push(lines, line)
+        line = if c == " " then "" else c
+        last_space = 0 - 1
+      }
+    }
+    i = i + 1
+  }
+  if line != "" then { list.push(lines, line) } else ()
+  lines
+}
+
+fn body_lines(faces: List[sfnt.Font], n: Note) -> List[String] =
+  if n.body == "" then [] else wrap(faces, n.body, config.THEME.font_size - 1.0, int.to_float(WIDTH) - 2.0 * PAD) |> list.take(4)
+
+fn card_height(faces: List[sfnt.Font], n: Note) -> Int = {
+  let th = config.THEME
+  let line = th.font_size * 1.45
+  float.to_int(PAD * 2.0 + line + int.to_float(list.len(body_lines(faces, n))) * (th.font_size * 1.35))
+}
+
+/// Height of the column for `notes`.
+fn height(faces: List[sfnt.Font], notes: List[Note]) -> Int = {
+  var h = 0
+  for n in notes { h = h + card_height(faces, n) + CARD_GAP }
+  int.max(1, h - CARD_GAP)
+}
+
+/// The id of the card at `y`, or 0.
+fn hit(faces: List[sfnt.Font], notes: List[Note], y: Float) -> Int = {
+  var top = 0
+  var found = 0
+  for n in notes {
+    let h = card_height(faces, n)
+    if y >= int.to_float(top) and y < int.to_float(top + h) then { found = n.id } else ()
+    top = top + h + CARD_GAP
+  }
+  found
+}
+
+fn render(faces: List[sfnt.Font], notes: List[Note], width: Int, h: Int) -> Bytes = {
+  let th = config.THEME
+  let bg = bar.rgba(th.background)
+  let fg = bar.rgba(th.foreground)
+  let dim = bar.rgba(th.dim)
+  let accent = bar.rgba(th.accent)
+  // Transparent between the cards.
+  var c = canvas.new(width, h)
+  var top = 0.0
+  let f = faces[0]
+  for n in notes {
+    let ch = int.to_float(card_height(faces, n))
+    c = canvas.rect(c, 0.0, top, int.to_float(width), top + ch, 10.0, bg.0, bg.1, bg.2, 0.96)
+    c = canvas.rect(c, 0.0, top, 4.0, top + ch, 2.0, accent.0, accent.1, accent.2, 1.0)
+    let em = th.font_size / int.to_float(f.units_per_em)
+    let first = top + PAD + int.to_float(f.ascent) * em
+    let title = if n.app != "" and n.app != n.summary then "${n.summary}" else n.summary
+    c = canvas.draw_text(c, faces, codes(title), th.font_size, PAD, first, fg.0, fg.1, fg.2, 1.0)
+    var y = first + th.font_size * 1.45
+    for l in body_lines(faces, n) {
+      c = canvas.draw_text(c, faces, codes(l), th.font_size - 1.0, PAD, y, dim.0 + 0.25, dim.1 + 0.25, dim.2 + 0.25, 1.0)
+      y = y + th.font_size * 1.35
+    }
+    top = top + ch + int.to_float(CARD_GAP)
+  }
+  c.px
+}

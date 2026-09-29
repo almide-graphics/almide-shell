@@ -57,6 +57,17 @@ let RIGHT: List[Module] = [Volume, Battery]
 software renderer): two windows on workspaces 1 and 3, a click on the bar's
 "1", screenshots before and after, and the idle measurement.
 
+## Status: M2 (in progress)
+
+- **Notifications** — `notifyd.almd` owns `org.freedesktop.Notifications` on
+  the session bus, over a D-Bus implementation written in Almide
+  (`src/dbus.almd`: SASL EXTERNAL, the marshalling rules, messages both ways).
+  `notify-send` and `gdbus` talk to it unchanged: Notify, CloseNotification
+  (with the NotificationClosed signal), GetCapabilities, GetServerInformation.
+  Cards stack at the top right, wrap text (Japanese included), expire, and
+  close on a click.
+- Launcher and OSD: next.
+
 ## Next
 
 - Volume and battery from events instead of reads every 5 and 30 s

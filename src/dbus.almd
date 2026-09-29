@@ -1,0 +1,507 @@
+// almide-shell dbus — the D-Bus wire protocol, in Almide
+//
+// What a desktop's services speak: notifications, media players, power,
+// network. A connection is a Unix socket to the session bus
+// ($DBUS_SESSION_BUS_ADDRESS, "unix:path=..."), authenticated with SASL
+// EXTERNAL (the kernel vouches for our uid), then messages in both
+// directions. A message is a fixed header, header fields (path, interface,
+// member, destination, signature ...) as an array of (code, variant), padded
+// to 8, and the body — every value aligned to its natural boundary counted
+// from the start of the message.
+//
+// Values are the `Arg` variant; `signature` spells a value's type the way
+// D-Bus does ("s", "as", "a{sv}", "(ssss)").
+
+import env
+import net
+
+type Arg =
+  | Byte(Int)
+  | Boolean(Bool)
+  | Int16(Int)
+  | UInt16(Int)
+  | Int32(Int)
+  | UInt32(Int)
+  | Int64(Int)
+  | UInt64(Int)
+  | Double(Float)
+  | Str(String)
+  | Path(String)
+  | Signature(String)
+  | Array(String, List[Arg])
+  | Struct(List[Arg])
+  | DictEntry(Arg, Arg)
+  | Variant(Arg)
+
+// Message types.
+let METHOD_CALL = 1
+let METHOD_RETURN = 2
+let ERROR = 3
+let SIGNAL = 4
+
+/// A message: its type, serial, the header fields that apply (empty or 0
+/// when absent) and its body.
+type Message = {
+  kind: Int,
+  flags: Int,
+  serial: Int,
+  path: String,
+  interface: String,
+  member: String,
+  error_name: String,
+  reply_serial: Int,
+  destination: String,
+  sender: String,
+  signature: String,
+  body: List[Arg],
+}
+
+fn message(kind: Int) -> Message = {
+  let none_body: List[Arg] = []
+  { kind: kind, flags: 0, serial: 0, path: "", interface: "", member: "", error_name: "",
+    reply_serial: 0, destination: "", sender: "", signature: "", body: none_body }
+}
+
+// ── Types ──
+
+fn signature(a: Arg) -> String = match a {
+  Byte(_) => "y",
+  Boolean(_) => "b",
+  Int16(_) => "n",
+  UInt16(_) => "q",
+  Int32(_) => "i",
+  UInt32(_) => "u",
+  Int64(_) => "x",
+  UInt64(_) => "t",
+  Double(_) => "d",
+  Str(_) => "s",
+  Path(_) => "o",
+  Signature(_) => "g",
+  Array(elem, _) => "a" + elem,
+  Struct(items) => "(" + (items |> list.map((i) => signature(i)) |> list.join("")) + ")",
+  DictEntry(k, v) => "{" + signature(k) + signature(v) + "}",
+  Variant(_) => "v",
+}
+
+fn signatures(args: List[Arg]) -> String = args |> list.map((a) => signature(a)) |> list.join("")
+
+/// The alignment of the type whose signature starts with `c`.
+fn align_of(c: String) -> Int = match c {
+  "y" => 1, "g" => 1, "v" => 1,
+  "n" => 2, "q" => 2,
+  "b" => 4, "i" => 4, "u" => 4, "s" => 4, "o" => 4, "a" => 4, "h" => 4,
+  "x" => 8, "t" => 8, "d" => 8, "(" => 8, "{" => 8,
+  _ => 1,
+}
+
+/// The index after the single complete type starting at `i` of `sig`.
+fn type_end(sig: List[String], i: Int) -> Int = {
+  let c = sig[i]
+  if c == "a" then type_end(sig, i + 1)
+  else if c == "(" or c == "{" then {
+    let close = if c == "(" then ")" else "}"
+    var j = i + 1
+    while sig[j] != close { j = type_end(sig, j) }
+    j + 1
+  } else i + 1
+}
+
+/// The complete types of a signature, in order.
+fn split_types(sig: String) -> List[String] = {
+  let cs = string.chars(sig)
+  let n = list.len(cs)
+  var out: List[String] = []
+  var i = 0
+  while i < n {
+    let e = type_end(cs, i)
+    list.push(out, cs |> list.drop(i) |> list.take(e - i) |> list.join(""))
+    i = e
+  }
+  out
+}
+
+// ── Writing ──
+
+fn pad(b: Bytes, to: Int) -> Bytes = {
+  var out = b
+  while bytes.len(out) % to != 0 { bytes.push(out, 0) }
+  out
+}
+
+fn put_u32(b: Bytes, v: Int) -> Bytes = {
+  var out = pad(b, 4)
+  bytes.append_u32_le(out, int.band(v, 0xFFFFFFFF))
+  out
+}
+
+fn put_string(b: Bytes, s: String) -> Bytes = {
+  let raw = bytes.from_string(s)
+  var out = put_u32(b, bytes.len(raw))
+  out = bytes.concat(out, raw)
+  bytes.push(out, 0)
+  out
+}
+
+/// `b` with `a` marshalled after it (offsets count from the start of `b`,
+/// the start of the message).
+fn put(b: Bytes, a: Arg) -> Bytes = match a {
+  Byte(v) => {
+    var out = b
+    bytes.push(out, int.band(v, 0xFF))
+    out
+  },
+  Boolean(v) => put_u32(b, if v then 1 else 0),
+  Int16(v) => {
+    var out = pad(b, 2)
+    bytes.append_i16_le(out, v)
+    out
+  },
+  UInt16(v) => {
+    var out = pad(b, 2)
+    bytes.append_u16_le(out, v)
+    out
+  },
+  Int32(v) => put_u32(b, v),
+  UInt32(v) => put_u32(b, v),
+  Int64(v) => {
+    var out = pad(b, 8)
+    bytes.append_i64_le(out, v)
+    out
+  },
+  UInt64(v) => {
+    var out = pad(b, 8)
+    bytes.append_i64_le(out, v)
+    out
+  },
+  Double(v) => {
+    var out = pad(b, 8)
+    bytes.append_f64_le(out, v)
+    out
+  },
+  Str(s) => put_string(b, s),
+  Path(s) => put_string(b, s),
+  Signature(s) => {
+    var out = b
+    bytes.push(out, string.len(s))
+    out = bytes.concat(out, bytes.from_string(s))
+    bytes.push(out, 0)
+    out
+  },
+  Array(elem, items) => {
+    // The length counts the elements' bytes, not the padding before the
+    // first one.
+    let head = put_u32(b, 0)
+    let start = pad(head, align_of(string.slice(elem, 0, 1)))
+    var out = start
+    for it in items { out = put(out, it) }
+    var fixed = out
+    bytes.set_u32_le(fixed, bytes.len(head) - 4, bytes.len(out) - bytes.len(start))
+    fixed
+  },
+  Struct(items) => {
+    var out = pad(b, 8)
+    for it in items { out = put(out, it) }
+    out
+  },
+  DictEntry(k, v) => put(put(pad(b, 8), k), v),
+  Variant(inner) => put(put(b, Signature(signature(inner))), inner),
+}
+
+fn field(code: Int, v: Arg) -> Arg = Struct([Byte(code), Variant(v)])
+
+/// A message as bytes.
+fn encode(m: Message) -> Bytes = {
+  var fields: List[Arg] = []
+  if m.path != "" then { list.push(fields, field(1, Path(m.path))) } else ()
+  if m.interface != "" then { list.push(fields, field(2, Str(m.interface))) } else ()
+  if m.member != "" then { list.push(fields, field(3, Str(m.member))) } else ()
+  if m.error_name != "" then { list.push(fields, field(4, Str(m.error_name))) } else ()
+  if m.reply_serial != 0 then { list.push(fields, field(5, UInt32(m.reply_serial))) } else ()
+  if m.destination != "" then { list.push(fields, field(6, Str(m.destination))) } else ()
+  let sig = signatures(m.body)
+  if sig != "" then { list.push(fields, field(8, Signature(sig))) } else ()
+  // The body is marshalled on its own, aligned from its own start (which
+  // the header's padding puts on an 8-byte boundary).
+  var body = bytes.new(0)
+  for a in m.body { body = put(body, a) }
+  var head = bytes.from_list([108, m.kind, m.flags, 1])
+  head = put_u32(head, bytes.len(body))
+  head = put_u32(head, m.serial)
+  head = put(head, Array("(yv)", fields))
+  bytes.concat(pad(head, 8), body)
+}
+
+// ── Reading ──
+
+/// The value of type `sig` at `pos` of `b`, and the position after it.
+fn get(b: Bytes, pos: Int, sig: String) -> (Arg, Int) = {
+  let c = string.slice(sig, 0, 1)
+  let at = (pos + align_of(c) - 1) / align_of(c) * align_of(c)
+  match c {
+    "y" => (Byte(bytes.read_u8(b, at)), at + 1),
+    "b" => (Boolean(bytes.read_u32_le(b, at) != 0), at + 4),
+    "n" => (Int16(bytes.read_i16_le(b, at)), at + 2),
+    "q" => (UInt16(bytes.read_u16_le(b, at)), at + 2),
+    "i" => (Int32(bytes.read_i32_le(b, at)), at + 4),
+    "u" => (UInt32(bytes.read_u32_le(b, at)), at + 4),
+    "h" => (UInt32(bytes.read_u32_le(b, at)), at + 4),
+    "x" => (Int64(bytes.read_i64_le(b, at)), at + 8),
+    "t" => (UInt64(bytes.read_i64_le(b, at)), at + 8),
+    "d" => (Double(bytes.read_f64_le(b, at)), at + 8),
+    "s" => {
+      let len = bytes.read_u32_le(b, at)
+      (Str(bytes.to_string_lossy(bytes.slice(b, at + 4, at + 4 + len))), at + 5 + len)
+    },
+    "o" => {
+      let len = bytes.read_u32_le(b, at)
+      (Path(bytes.to_string_lossy(bytes.slice(b, at + 4, at + 4 + len))), at + 5 + len)
+    },
+    "g" => {
+      let len = bytes.read_u8(b, at)
+      (Signature(bytes.to_string_lossy(bytes.slice(b, at + 1, at + 1 + len))), at + 2 + len)
+    },
+    "v" => {
+      let s = get(b, at, "g")
+      let inner_sig = match s.0 { Signature(t) => t, _ => "" }
+      let v = get(b, s.1, inner_sig)
+      (Variant(v.0), v.1)
+    },
+    "a" => {
+      let elem = string.slice(sig, 1)
+      let len = bytes.read_u32_le(b, at)
+      let ea = align_of(string.slice(elem, 0, 1))
+      let start = (at + 4 + ea - 1) / ea * ea
+      var items: List[Arg] = []
+      var p = start
+      while p < start + len {
+        let got = get(b, p, elem)
+        list.push(items, got.0)
+        p = got.1
+      }
+      (Array(elem, items), start + len)
+    },
+    "(" => {
+      let inner = string.slice(sig, 1, string.len(sig) - 1)
+      let parts = get_all(b, at, inner)
+      (Struct(parts.0), parts.1)
+    },
+    "{" => {
+      let inner = split_types(string.slice(sig, 1, string.len(sig) - 1))
+      let k = get(b, at, inner[0])
+      let v = get(b, k.1, inner[1])
+      (DictEntry(k.0, v.0), v.1)
+    },
+    _ => (Byte(0), at),
+  }
+}
+
+/// Every value of the signature `sig` from `pos`, and the position after.
+fn get_all(b: Bytes, pos: Int, sig: String) -> (List[Arg], Int) = {
+  var out: List[Arg] = []
+  var p = pos
+  for t in split_types(sig) {
+    let got = get(b, p, t)
+    list.push(out, got.0)
+    p = got.1
+  }
+  (out, p)
+}
+
+/// The length of the complete message at the front of `b`, or 0 when it
+/// has not all arrived.
+fn message_len(b: Bytes) -> Int = {
+  if bytes.len(b) < 16 then 0
+  else {
+    let body = bytes.read_u32_le(b, 4)
+    let fields = bytes.read_u32_le(b, 12)
+    let total = (16 + fields + 7) / 8 * 8 + body
+    if bytes.len(b) >= total then total else 0
+  }
+}
+
+fn str_of(a: Arg) -> String = match a {
+  Str(s) => s,
+  Path(s) => s,
+  Signature(s) => s,
+  Variant(v) => str_of(v),
+  _ => "",
+}
+
+fn int_of(a: Arg) -> Int = match a {
+  Byte(v) => v,
+  Int16(v) => v,
+  UInt16(v) => v,
+  Int32(v) => v,
+  UInt32(v) => v,
+  Int64(v) => v,
+  UInt64(v) => v,
+  Variant(v) => int_of(v),
+  Boolean(v) => if v then 1 else 0,
+  _ => 0,
+}
+
+/// Decode one complete message (little-endian: what every bus we reach
+/// sends).
+fn decode(b: Bytes) -> Message = {
+  let fields = get(b, 12, "a(yv)")
+  var m = { ...message(bytes.read_u8(b, 1)), flags: bytes.read_u8(b, 2), serial: bytes.read_u32_le(b, 8) }
+  match fields.0 {
+    Array(_, items) => {
+      for f in items {
+        match f {
+          Struct(pair) => {
+            let code = int_of(pair[0])
+            let v = pair[1]
+            if code == 1 then { m = { ...m, path: str_of(v) } }
+            else if code == 2 then { m = { ...m, interface: str_of(v) } }
+            else if code == 3 then { m = { ...m, member: str_of(v) } }
+            else if code == 4 then { m = { ...m, error_name: str_of(v) } }
+            else if code == 5 then { m = { ...m, reply_serial: int_of(v) } }
+            else if code == 6 then { m = { ...m, destination: str_of(v) } }
+            else if code == 7 then { m = { ...m, sender: str_of(v) } }
+            else if code == 8 then { m = { ...m, signature: str_of(v) } }
+            else ()
+          },
+          _ => (),
+        }
+      }
+    },
+    _ => (),
+  }
+  let body_at = (fields.1 + 7) / 8 * 8
+  // The body's alignment counts from its own start: read it as its own bytes.
+  let body = bytes.slice(b, body_at, bytes.len(b))
+  { ...m, body: get_all(body, 0, m.signature).0 }
+}
+
+// ── The connection ──
+
+var sock = 0 - 1
+var serial = 0
+var pending: Bytes = bytes.new(0)
+var unique = ""
+
+/// The socket path in a bus address ("unix:path=/run/user/1000/bus,guid=...").
+fn address_path(address: String) -> String = {
+  let first = string.split(address, ";")[0]
+  if string.starts_with(first, "unix:") then {
+    let kvs = string.split(string.slice(first, 5), ",")
+    match kvs |> list.find((kv) => string.starts_with(kv, "path=")) {
+      some(kv) => string.slice(kv, 5),
+      none => "",
+    }
+  } else ""
+}
+
+/// Connect to the session bus and say Hello; our unique name.
+effect fn connect() -> Result[String, String] = {
+  let address = env.get("DBUS_SESSION_BUS_ADDRESS") ?? ""
+  let path = if address == "" then "${env.get("XDG_RUNTIME_DIR") ?? "/tmp"}/bus" else address_path(address)
+  if path == "" then err("unsupported bus address: ${address}")
+  else {
+    sock = net.unix_connect(path)!
+    // SASL EXTERNAL with no initial response: the server asks (DATA), we
+    // send none, and it takes our uid from the socket.
+    net.unix_send(sock, bytes.concat(bytes.from_list([0]), bytes.from_string("AUTH EXTERNAL\r\n")), [])!
+    let first = line()!
+    if string.starts_with(first, "DATA") then {
+      net.unix_send(sock, bytes.from_string("DATA\r\n"), [])!
+    } else ()
+    let answer = if string.starts_with(first, "OK") then first else line()!
+    if not string.starts_with(answer, "OK") then err("D-Bus authentication refused: ${answer}")
+    else {
+      net.unix_send(sock, bytes.from_string("BEGIN\r\n"), [])!
+      let reply = call("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "Hello", [])!
+      unique = str_of(reply.body[0])
+      ok(unique)
+    }
+  }
+}
+
+/// One line of the authentication exchange.
+effect fn line() -> Result[String, String] = {
+  var text = ""
+  while not string.contains(text, "\r\n") {
+    let got = net.unix_recv(sock, 1)!
+    if bytes.len(got) == 0 then { text = text + "\r\n" } else { text = text + bytes.to_string_lossy(got) }
+  }
+  ok(string.trim(text))
+}
+
+/// The connection's socket, to wait on beside others.
+fn fd() -> Int = sock
+
+/// Send `m` with the next serial; that serial.
+effect fn send(m: Message) -> Result[Int, String] = {
+  serial = serial + 1
+  net.unix_send(sock, encode({ ...m, serial: serial }), [])!
+  ok(serial)
+}
+
+/// Messages that have arrived (waiting up to `timeout_ms` for the first).
+effect fn read(timeout_ms: Int) -> Result[List[Message], String] = {
+  var out: List[Message] = []
+  if net.unix_poll(sock, timeout_ms)! then {
+    let got = net.unix_recv(sock, 65536)!
+    if bytes.len(got) == 0 then { sock = 0 - 1 } else { pending = bytes.concat(pending, got) }
+  } else ()
+  var n = message_len(pending)
+  while n > 0 {
+    list.push(out, decode(bytes.slice(pending, 0, n)))
+    pending = bytes.slice(pending, n, bytes.len(pending))
+    n = message_len(pending)
+  }
+  if sock < 0 and list.len(out) == 0 then err("the bus closed the connection") else ok(out)
+}
+
+// Messages read while waiting for a reply, handed out by the next `read`s.
+var held: List[Message] = []
+
+/// Everything to handle: messages set aside while waiting for replies, then
+/// what arrives within `timeout_ms`.
+effect fn next(timeout_ms: Int) -> Result[List[Message], String] = {
+  let before = held
+  held = []
+  if list.len(before) > 0 then ok(before + read(0)!) else read(timeout_ms)
+}
+
+/// Call a method and wait for its reply (an error reply is `err`).
+effect fn call(dest: String, path: String, iface: String, member: String, args: List[Arg]) -> Result[Message, String] = {
+  let s = send({ ...message(METHOD_CALL), destination: dest, path: path, interface: iface, member: member, body: args })!
+  var reply: Message? = none
+  while reply == none {
+    for m in read(0 - 1)! {
+      if m.reply_serial == s and (m.kind == METHOD_RETURN or m.kind == ERROR) then { reply = some(m) }
+      else { list.push(held, m) }
+    }
+  }
+  match reply {
+    some(r) => if r.kind == ERROR then err("${r.error_name}: ${str_of(if list.len(r.body) > 0 then r.body[0] else Str(""))}") else ok(r),
+    none => err("no reply"),
+  }
+}
+
+/// Reply to method call `to` with `args`.
+effect fn reply(to: Message, args: List[Arg]) -> Result[Unit, String] = {
+  let _ = send({ ...message(METHOD_RETURN), destination: to.sender, reply_serial: to.serial, body: args })!
+  ok(())
+}
+
+/// Reply to method call `to` with the error `name`.
+effect fn reply_error(to: Message, name: String, text: String) -> Result[Unit, String] = {
+  let _ = send({ ...message(ERROR), destination: to.sender, reply_serial: to.serial, error_name: name, body: [Str(text)] })!
+  ok(())
+}
+
+/// Emit a signal.
+effect fn signal(path: String, iface: String, member: String, args: List[Arg]) -> Result[Unit, String] = {
+  let _ = send({ ...message(SIGNAL), path: path, interface: iface, member: member, body: args })!
+  ok(())
+}
+
+/// Own the well-known name `name`; false when someone else keeps it.
+effect fn request_name(name: String) -> Result[Bool, String] = {
+  // DO_NOT_QUEUE (4); reply 1 = primary owner.
+  let r = call("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName", [Str(name), UInt32(4)])!
+  ok(int_of(r.body[0]) == 1)
+}
