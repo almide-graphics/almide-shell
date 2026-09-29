@@ -90,24 +90,26 @@ fn hit(faces: List[sfnt.Font], notes: List[Note], y: Float) -> Int = {
   found
 }
 
-fn render(faces: List[sfnt.Font], notes: List[Note], width: Int, h: Int) -> Bytes = {
+/// The column of `notes` drawn on `frame` (the window's pixels, drawn on in
+/// units).
+fn render(faces: List[sfnt.Font], notes: List[Note], frame: canvas.Canvas) -> Bytes = {
   let th = config.THEME
   let bg = bar.rgba(th.background)
   let fg = bar.rgba(th.foreground)
   let dim = bar.rgba(th.dim)
   let accent = bar.rgba(th.accent)
   // Transparent between the cards.
-  var c = canvas.new(width, h)
+  var c = frame
+  let width = canvas.width(c)
   var top = 0.0
   let f = faces[0]
   for n in notes {
     let ch = int.to_float(card_height(faces, n))
-    c = canvas.rect(c, 0.0, top, int.to_float(width), top + ch, 10.0, bg.0, bg.1, bg.2, 0.96)
+    c = canvas.rect(c, 0.0, top, width, top + ch, 10.0, bg.0, bg.1, bg.2, 0.96)
     c = canvas.rect(c, 0.0, top, 4.0, top + ch, 2.0, accent.0, accent.1, accent.2, 1.0)
     let em = th.font_size / int.to_float(f.units_per_em)
     let first = top + PAD + int.to_float(f.ascent) * em
-    let title = if n.app != "" and n.app != n.summary then "${n.summary}" else n.summary
-    c = canvas.draw_text(c, faces, codes(title), th.font_size, PAD, first, fg.0, fg.1, fg.2, 1.0)
+    c = canvas.draw_text(c, faces, codes(n.summary), th.font_size, PAD, first, fg.0, fg.1, fg.2, 1.0)
     var y = first + th.font_size * 1.45
     for l in body_lines(faces, n) {
       c = canvas.draw_text(c, faces, codes(l), th.font_size - 1.0, PAD, y, dim.0 + 0.25, dim.1 + 0.25, dim.2 + 0.25, 1.0)

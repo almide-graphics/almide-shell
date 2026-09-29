@@ -10,6 +10,7 @@
 import net
 import snaidhm.wayland.window as window
 import snaidhm.native.fonts as fonts
+import snaidhm.cpu.canvas as canvas
 import self.bar as bar
 import self.config as config
 import self.hypr as hypr
@@ -38,6 +39,9 @@ effect fn refresh_workspaces(st: bar.State) -> Result[bar.State, String] =
     err(_) => ok(st),
   }
 
+/// A frame for the bar: the window's pixels, drawn on in units.
+fn frame() -> canvas.Canvas = canvas.scaled(window.width(), window.height(), window.scale())
+
 effect fn main() -> Unit = {
   let th = config.THEME
   let anchors = int.bor(int.bor(window.ANCHOR_TOP, window.ANCHOR_LEFT), window.ANCHOR_RIGHT)
@@ -54,7 +58,7 @@ effect fn main() -> Unit = {
     }
     st = refresh_workspaces(st)!
     for c in cmds { st = { ...st, outputs: map.set(st.outputs, c.0, sys.command(c.0)!) } }
-    window.present(bar.render(faces, st, window.width(), window.height()))!
+    window.present(bar.render(faces, st, frame()))!
     let tick = if uses_seconds() then 1 else 60
     var going = true
     while going {
@@ -78,7 +82,7 @@ effect fn main() -> Unit = {
       var kind = window.next_event()
       while kind != window.NONE {
         if kind == window.MOUSE_DOWN and window.event_code() == 0 then {
-          let action = bar.hit(faces, next, window.width(), window.event_x())
+          let action = bar.hit(faces, next, window.extent().0, window.event_x())
           if action != "" then { let _ = hypr.dispatch(action) } else ()
         } else ()
         kind = window.next_event()
@@ -92,7 +96,7 @@ effect fn main() -> Unit = {
       }
       let redraw = window.resized() or bar.render_key(next) != bar.render_key(st)
       st = next
-      if redraw and going then { window.present(bar.render(faces, st, window.width(), window.height()))! } else ()
+      if redraw and going then { window.present(bar.render(faces, st, frame()))! } else ()
     }
   } else {
     println("no layer-shell surface: needs a Wayland compositor with wlr-layer-shell (Hyprland, sway)")

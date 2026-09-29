@@ -1,0 +1,139 @@
+// almide-shell launcher — type to find an application, Enter to start it
+//
+//   almide run launcher.almd        (bind it to a key: bind = SUPER, SPACE, exec, launcher)
+//
+// A layer surface over everything, centred, holding the keyboard: typing
+// filters the installed applications (apps.almd), Up/Down move the
+// selection, Enter starts it through Hyprland, Escape closes.
+
+import process
+import snaidhm.wayland.window as window
+import snaidhm.native.fonts as fonts
+import snaidhm.cpu.canvas as canvas
+import snaidhm.sfnt as sfnt
+import self.apps as apps
+import self.bar as bar
+import self.config as config
+import self.hypr as hypr
+
+let WIDTH = 640
+let ROWS = 8
+let ROW_H = 40
+let HEAD_H = 56
+/// Room kept between the launcher and the edges of a small output.
+let EDGE = 16
+
+fn height_for(rows: Int) -> Int = HEAD_H + 12 + rows * ROW_H
+
+/// A frame for the launcher: the window's pixels, drawn on in units.
+fn frame() -> canvas.Canvas = canvas.scaled(window.width(), window.height(), window.scale())
+
+fn render(faces: List[sfnt.Font], query: String, shown: List[apps.App], sel: Int, rows: Int, frame: canvas.Canvas) -> Bytes = {
+  let th = config.THEME
+  let bg = bar.rgba(th.background)
+  let fg = bar.rgba(th.foreground)
+  let dim = bar.rgba(th.dim)
+  let accent = bar.rgba(th.accent)
+  var c = frame
+  let w = canvas.width(c)
+  c = canvas.rect(c, 0.0, 0.0, w, canvas.height(c), 14.0, bg.0, bg.1, bg.2, 0.97)
+  let size = th.font_size + 3.0
+  let text = if query == "" then "Search applications" else query
+  let col = if query == "" then dim else fg
+  c = canvas.draw_text(c, faces, bar.text_codes(text), size, 20.0, 36.0, col.0, col.1, col.2, 1.0)
+  // The caret after what was typed.
+  let cx = 20.0 + (if query == "" then 0.0 else canvas.measure(faces, bar.text_codes(query), size)) + 1.0
+  c = canvas.rect(c, cx, 18.0, cx + 2.0, 42.0, 0.0, accent.0, accent.1, accent.2, 1.0)
+  c = canvas.rect(c, 16.0, int.to_float(HEAD_H) - 1.0, w - 16.0, int.to_float(HEAD_H), 0.0, dim.0, dim.1, dim.2, 0.6)
+  let n = int.min(rows, list.len(shown))
+  for i in 0..<n {
+    let top = int.to_float(HEAD_H + 6 + i * ROW_H)
+    if i == sel then {
+      c = canvas.rect(c, 8.0, top, w - 8.0, top + int.to_float(ROW_H) - 4.0, 8.0, accent.0, accent.1, accent.2, 1.0)
+    } else ()
+    let ink = if i == sel then bg else fg
+    let a = shown[i]
+    c = canvas.draw_text(c, faces, bar.text_codes(a.name), th.font_size + 1.0, 22.0, top + 25.0, ink.0, ink.1, ink.2, 1.0)
+    if a.comment != "" then {
+      let x = 34.0 + canvas.measure(faces, bar.text_codes(a.name), th.font_size + 1.0)
+      let faint = if i == sel then bg else dim
+      c = canvas.draw_text(c, faces, bar.text_codes(a.comment), th.font_size - 1.0, x, top + 25.0, faint.0, faint.1, faint.2, 0.9)
+    } else ()
+  }
+  if list.len(shown) == 0 then {
+    c = canvas.draw_text(c, faces, bar.text_codes("No matches"), th.font_size, 22.0, int.to_float(HEAD_H + 32), dim.0, dim.1, dim.2, 1.0)
+  } else ()
+  c.px
+}
+
+/// Start `app`: through Hyprland when it runs us, else directly.
+effect fn launch(app: apps.App) -> Result[Unit, String] = {
+  match hypr.dispatch("exec ${app.exec}") {
+    ok(_) => ok(()),
+    err(_) => {
+      let _ = process.spawn("sh", ["-c", app.exec])!
+      ok(())
+    },
+  }
+}
+
+effect fn main() -> Unit = {
+  let all = apps.all()!
+  let all_edges = int.bor(int.bor(window.ANCHOR_TOP, window.ANCHOR_BOTTOM), int.bor(window.ANCHOR_LEFT, window.ANCHOR_RIGHT))
+  // Stretched over the output first, to learn its room (nothing is shown
+  // before the first frame); then as big as fits, anchored to no edge —
+  // centred. Keyboard: exclusive.
+  if window.open_layer("almide-launcher", window.LAYER_OVERLAY, all_edges, 0, 0, 0, 1, 0)! then {
+    let room = window.extent()
+    let w = int.min(WIDTH, float.to_int(room.0) - 2 * EDGE)
+    let rows = int.clamp((float.to_int(room.1) - 2 * EDGE - height_for(0)) / ROW_H, 1, ROWS)
+    window.anchor_layer(0)!
+    window.resize_layer(w, height_for(rows))!
+    let faces = fonts.system()!
+    var query = ""
+    var sel = 0
+    var shown = apps.filter(all, query)
+    window.present(render(faces, query, shown, sel, rows, frame()))!
+    var going = true
+    while going {
+      going = window.pump(0 - 1)!
+      var changed = false
+      var kind = window.next_event()
+      while kind != window.NONE {
+        if kind == window.TEXT then {
+          query = query + string.from_codepoint(window.event_code())
+          sel = 0
+          changed = true
+        } else if kind == window.KEY then {
+          let k = window.event_code()
+          if k == window.KEY_ESCAPE then { going = false }
+          else if k == window.KEY_BACKSPACE then {
+            let cs = string.chars(query)
+            query = cs |> list.take(int.max(0, list.len(cs) - 1)) |> list.join("")
+            sel = 0
+            changed = true
+          } else if k == window.KEY_DOWN or k == window.KEY_TAB then {
+            sel = int.min(sel + 1, int.max(0, int.min(rows, list.len(shown)) - 1))
+            changed = true
+          } else if k == window.KEY_UP then {
+            sel = int.max(0, sel - 1)
+            changed = true
+          } else if k == window.KEY_ENTER then {
+            match list.get(shown, sel) {
+              some(app) => launch(app)!,
+              none => (),
+            }
+            going = false
+          } else ()
+        } else ()
+        kind = window.next_event()
+      }
+      if (changed or window.resized()) and going then {
+        shown = apps.filter(all, query)
+        window.present(render(faces, query, shown, sel, rows, frame()))!
+      } else ()
+    }
+  } else {
+    println("no layer-shell surface: needs a Wayland compositor with wlr-layer-shell (Hyprland, sway)")
+  }
+}

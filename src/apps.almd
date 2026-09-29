@@ -1,0 +1,107 @@
+// almide-shell apps — the installed applications, from their .desktop files
+//
+// Desktop entries (freedesktop.org Desktop Entry spec) live under
+// $XDG_DATA_HOME/applications and each $XDG_DATA_DIRS entry's applications/;
+// a user's file shadows a system one of the same name.
+
+import env
+import fs
+
+type App = { id: String, name: String, exec: String, comment: String }
+
+/// The directories to read, most important first.
+effect fn dirs() -> List[String] = {
+  let home = env.get("HOME") ?? ""
+  let data_home = env.get("XDG_DATA_HOME") ?? "${home}/.local/share"
+  let data_dirs = env.get("XDG_DATA_DIRS") ?? "/usr/local/share:/usr/share"
+  ok([data_home] + string.split(data_dirs, ":") |> list.filter((d) => d != "") |> list.map((d) => "${d}/applications"))
+}
+
+/// The value of `key` in the [Desktop Entry] group of `text` ("" if absent).
+fn entry_value(text: String, key: String) -> String = {
+  var in_entry = false
+  var out = ""
+  var found = false
+  for raw in string.lines(text) {
+    let line = string.trim(raw)
+    if string.starts_with(line, "[") then { in_entry = line == "[Desktop Entry]" }
+    else if in_entry and not found and string.starts_with(line, key + "=") then {
+      out = string.slice(line, string.len(key) + 1)
+      found = true
+    } else ()
+  }
+  out
+}
+
+/// `Exec` without its field codes (%f %u %F %U %i %c %k ...).
+fn command(exec: String) -> String =
+  string.split(exec, " ")
+    |> list.filter((w) => not (string.starts_with(w, "%") and string.len(w) == 2))
+    |> list.join(" ")
+
+/// The app a desktop file describes, or none when it should not be listed.
+fn parse(id: String, text: String) -> App? = {
+  let kind = entry_value(text, "Type")
+  let hidden = entry_value(text, "NoDisplay") == "true" or entry_value(text, "Hidden") == "true"
+  let name = entry_value(text, "Name")
+  let exec = entry_value(text, "Exec")
+  if kind != "Application" or hidden or name == "" or exec == "" then none
+  else some({ id: id, name: name, exec: command(exec), comment: entry_value(text, "Comment") })
+}
+
+/// Every listed app, by name.
+effect fn all() -> List[App] = {
+  var seen: List[String] = []
+  var out: List[App] = []
+  for d in dirs()! {
+    let names = match fs.list_dir(d) { ok(ns) => ns, err(_) => [] }
+    for n in names {
+      if string.ends_with(n, ".desktop") and not list.contains(seen, n) then {
+        list.push(seen, n)
+        match fs.read_text("${d}/${n}") {
+          ok(text) => match parse(n, text) {
+            some(app) => { list.push(out, app) },
+            none => (),
+          },
+          err(_) => (),
+        }
+      } else ()
+    }
+  }
+  ok(list.sort_by(out, (a) => string.to_lower(a.name)))
+}
+
+/// How well `query` matches `name`, higher is better; 0 when it does not
+/// (its characters must appear in order). A match at the start or at a word
+/// start, and consecutive characters, score higher.
+fn score(query: String, name: String) -> Int = {
+  let q = string.chars(string.to_lower(query))
+  let s = string.chars(string.to_lower(name))
+  let nq = list.len(q)
+  let ns = list.len(s)
+  if nq == 0 then 1
+  else {
+    var qi = 0
+    var total = 0
+    var prev = 0 - 2
+    for si in 0..<ns {
+      if qi < nq and s[si] == q[qi] then {
+        var points = 1
+        if si == 0 then { points = points + 8 } else if s[si - 1] == " " or s[si - 1] == "-" then { points = points + 5 } else ()
+        if si == prev + 1 then { points = points + 3 } else ()
+        total = total + points
+        prev = si
+        qi = qi + 1
+      } else ()
+    }
+    if qi == nq then total + 1 else 0
+  }
+}
+
+/// The apps matching `query`, best first.
+fn filter(apps: List[App], query: String) -> List[App] =
+  apps
+    |> list.map((a) => (score(query, a.name), a))
+    |> list.filter(((s, _)) => s > 0)
+    |> list.sort_by(((s, a)) => (0 - s, string.to_lower(a.name)))
+    |> list.map(((_, a)) => a)

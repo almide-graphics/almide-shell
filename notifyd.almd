@@ -11,6 +11,7 @@ import env
 import net
 import snaidhm.sfnt as sfnt
 import snaidhm.wayland.window as window
+import snaidhm.cpu.canvas as canvas
 import snaidhm.native.fonts as fonts
 import self.dbus as dbus
 import self.notify as notify
@@ -75,10 +76,12 @@ effect fn show(faces: List[sfnt.Font]) -> Result[Unit, String] = {
     if not window.shown() then {
       let anchors = int.bor(window.ANCHOR_TOP, window.ANCHOR_RIGHT)
       let _ = window.open_layer("almide-notifications", window.LAYER_OVERLAY, anchors, notify.WIDTH, h, 0, 0, notify.MARGIN)!
-    } else if window.height() != h then {
+    } else if window.extent().1 != int.to_float(h) then {
       window.resize_layer(notify.WIDTH, h)!
     } else ()
-    window.present(notify.render(faces, notes, window.width(), window.height()))!
+    window.present(notify.render(faces, notes, canvas.scaled(window.width(), window.height(), window.scale())))!
+    // Drawn at the size and scale there are now.
+    let _ = window.resized()
   }
   ok(())
 }
@@ -116,7 +119,8 @@ effect fn main() -> Unit = {
         if n.expires_at > 0 and n.expires_at <= t then close(n.id, 1)! else ()
       }
       let key = notes |> list.map((n) => int.to_string(n.id)) |> list.join(",")
-      if key != shown_key then {
+      // New cards, cards gone, or the output's scale changed under them.
+      if key != shown_key or (window.shown() and window.resized()) then {
         show(faces)!
         shown_key = key
       } else ()

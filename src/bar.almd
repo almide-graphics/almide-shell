@@ -104,10 +104,9 @@ fn span(placed: List[Placed]) -> Float = {
   if n == 0 then 0.0 else placed[n - 1].x + placed[n - 1].w - placed[0].x
 }
 
-/// Every piece of the bar, placed for a `width`-wide bar.
-fn layout(faces: List[sfnt.Font], st: State, width: Int) -> List[Placed] = {
+/// Every piece of the bar, placed for a bar `w` units wide.
+fn layout(faces: List[sfnt.Font], st: State, w: Float) -> List[Placed] = {
   let th = config.THEME
-  let w = int.to_float(width)
   let left = place(faces, group(config.LEFT, st), th.padding, th.gap)
   let center0 = place(faces, group(config.CENTER, st), 0.0, th.gap)
   let center = place(faces, group(config.CENTER, st), (w - span(center0)) / 2.0, th.gap)
@@ -116,17 +115,19 @@ fn layout(faces: List[sfnt.Font], st: State, width: Int) -> List[Placed] = {
   left + center + right
 }
 
-/// The bar as pixels (wl_shm's layout), `width` x `height`.
-fn render(faces: List[sfnt.Font], st: State, width: Int, height: Int) -> Bytes = {
+/// The bar drawn on `frame` (the window's pixels, drawn on in units).
+fn render(faces: List[sfnt.Font], st: State, frame: canvas.Canvas) -> Bytes = {
   let th = config.THEME
   let bg = rgba(th.background)
-  var c = canvas.new(width, height)
+  let width = canvas.width(frame)
+  let height = canvas.height(frame)
+  var c = frame
   c = canvas.clear(c, bg.0, bg.1, bg.2)
   let f = faces[0]
   let em = th.font_size / int.to_float(f.units_per_em)
   let ascent = int.to_float(f.ascent) * em
   let descent = 0.0 - int.to_float(f.descent) * em
-  let baseline = float.round(int.to_float(height) / 2.0 + (ascent - descent) / 2.0)
+  let baseline = height / 2.0 + (ascent - descent) / 2.0
   let placed = layout(faces, st, width)
   let n = list.len(placed)
   for i in 0..<n {
@@ -134,7 +135,7 @@ fn render(faces: List[sfnt.Font], st: State, width: Int, height: Int) -> Bytes =
     let tx = if p.piece.boxed or p.piece.action != "" then p.x + 8.0 else p.x
     if p.piece.boxed then {
       let a = rgba(th.accent)
-      c = canvas.rect(c, p.x, 4.0, p.x + p.w, int.to_float(height) - 4.0, 6.0, a.0, a.1, a.2, a.3)
+      c = canvas.rect(c, p.x, 4.0, p.x + p.w, height - 4.0, 6.0, a.0, a.1, a.2, a.3)
     } else ()
     let col = rgba(p.piece.color)
     c = canvas.draw_text(c, faces, text_codes(p.piece.text), th.font_size, tx, baseline, col.0, col.1, col.2, col.3)
@@ -142,8 +143,8 @@ fn render(faces: List[sfnt.Font], st: State, width: Int, height: Int) -> Bytes =
   c.px
 }
 
-/// The action of the piece at `x`, or "".
-fn hit(faces: List[sfnt.Font], st: State, width: Int, x: Float) -> String =
+/// The action of the piece at `x` on a bar `width` units wide, or "".
+fn hit(faces: List[sfnt.Font], st: State, width: Float, x: Float) -> String =
   match layout(faces, st, width) |> list.find((p) => p.piece.action != "" and x >= p.x and x < p.x + p.w) {
     some(p) => p.piece.action,
     none => "",

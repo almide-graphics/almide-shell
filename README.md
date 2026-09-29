@@ -66,11 +66,20 @@ software renderer): two windows on workspaces 1 and 3, a click on the bar's
   (with the NotificationClosed signal), GetCapabilities, GetServerInformation.
   Cards stack at the top right, wrap text (Japanese included), expire, and
   close on a click.
-- Launcher and OSD: next.
+- **Launcher** — `launcher.almd` (bind it: `bind = SUPER, SPACE, exec,
+  launcher`): the installed applications from the XDG `.desktop` files
+  (`src/apps.almd`), filtered as you type, Up/Down/Tab to pick, Enter starts
+  it through Hyprland's `exec`, Escape closes. It sizes itself to the room the
+  output has.
+- **Any scale** — every surface draws at the output's scale, fractional ones
+  included (`wp_fractional_scale_v1` + `wp_viewporter`), and stays sharp:
+  the canvas draws in units, so no drawing code multiplies by the scale.
+  `SCALE=1.6 test/hyprland/run.sh` checks it.
+- OSD: next.
 
 ## Next
 
 - Volume and battery from events instead of reads every 5 and 30 s
   (PipeWire's protocol, UPower over D-Bus) — the last periodic wakes.
-- HiDPI (`wl_surface.preferred_buffer_scale`), partial redraw (damage).
-- M2: D-Bus in Almide (the notification daemon), launcher, OSD.
+- Partial redraw (damage).
+- M2: the volume/brightness OSD.

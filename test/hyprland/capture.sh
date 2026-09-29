@@ -1,7 +1,9 @@
 #!/bin/bash
 # Inside the container: start Hyprland, run the bar and two windows on
 # different workspaces, switch between them, click the bar, and capture.
-#   capture.sh OUT.png
+#   SCALE=2 capture.sh OUT.png
+# SCALE is the output's scale (default 2, a laptop's dense screen; 1.6 takes
+# the fractional path; 1 a plain one) on vkms's 1024x768.
 set -u
 OUT=$1
 ALMIDE=/almide/build/release/almide
@@ -14,13 +16,27 @@ chown -R u /w /snaidhm-copy
 cd /w
 $ALMIDE build main.almd -o /tmp/bar 2>&1 | tail -1
 $ALMIDE build notifyd.almd -o /tmp/notifyd 2>&1 | tail -1
+$ALMIDE build launcher.almd -o /tmp/launcher 2>&1 | tail -1
 (cd /snaidhm-copy && $ALMIDE build examples/wayland/main.almd -o /tmp/win 2>&1 | tail -1 && $ALMIDE build examples/wayland/drive.almd -o /tmp/drive 2>&1 | tail -1)
-chmod 755 /tmp/bar /tmp/notifyd /tmp/win /tmp/drive
+chmod 755 /tmp/bar /tmp/notifyd /tmp/launcher /tmp/win /tmp/drive
+# Applications for the launcher to find.
+mkdir -p /home/u/.local/share/applications
+for app in "almide-window|Almide Window|/tmp/win 20000|A window written in Almide" "files|Files|true|Browse the file system" "settings|設定|true|システムの設定" "terminal|Terminal|true|Command line" "hidden|Hidden|true|"; do
+  IFS='|' read id name exec comment <<< "$app"
+  extra=""; [ "$id" = hidden ] && extra="NoDisplay=true"
+  printf '[Desktop Entry]\nType=Application\nName=%s\nExec=%s %%U\nComment=%s\n%s\n' "$name" "$exec" "$comment" "$extra" > /home/u/.local/share/applications/$id.desktop
+done
+chown -R u /home/u/.local
 seatd -g video > /tmp/seatd.log 2>&1 &
 sleep 0.5
 mkdir -p /tmp/xdg && chown u /tmp/xdg && chmod 700 /tmp/xdg
 mkdir -p /home/u/.config/hypr
-cat > /home/u/.config/hypr/hyprland.conf <<'CONF'
+SCALE=${SCALE:-2}
+# The output in surface units: what the virtual pointer's extent is.
+LW=$(awk "BEGIN { print int(1024 / $SCALE + 0.5) }")
+LH=$(awk "BEGIN { print int(768 / $SCALE + 0.5) }")
+cat > /home/u/.config/hypr/hyprland.conf <<CONF
+monitor = , 1024x768, 0x0, $SCALE
 misc {
   disable_hyprland_logo = true
   disable_splash_rendering = true
@@ -61,7 +77,7 @@ su u -c "$ENVS hyprctl dispatch workspace 3 >/dev/null; /tmp/win 20000 > /tmp/wi
 sleep 1.5
 su u -c "$ENVS hyprctl dismissnotify >/dev/null; grim /out/before-click.png"
 # Click workspace 1's button on the bar (the first piece, at the left edge).
-su u -c "$ENVS /tmp/drive extent 1024 768 move 24 15 sleep 200 click sleep 300" >/dev/null
+su u -c "$ENVS /tmp/drive extent $LW $LH move 24 15 sleep 200 click sleep 300" >/dev/null
 sleep 1
 su u -c "$ENVS hyprctl dismissnotify >/dev/null; grim $OUT"
 # Notifications, through the bus as any app sends them.
@@ -81,6 +97,21 @@ T0=$(awk '{print $14+$15}' /proc/$BAR/stat); sleep 20; T1=$(awk '{print $14+$15}
 echo "idle: $((T1 - T0)) clock ticks of CPU in 20 s (of $((20 * $(getconf CLK_TCK))))"
 echo "rss: $(awk '/VmRSS/{print $2, $3}' /proc/$BAR/status)"
 su u -c "$ENVS hyprctl activeworkspace -j" | grep '"id"' | head -1
+# The launcher: type, pick, start.
+su u -c "$ENVS hyprctl dispatch workspace 5 >/dev/null"
+su u -c "$ENVS WAYLAND_DEBUG=${CLIENT_DEBUG:-} /tmp/launcher > /tmp/launcher.log 2>&1 &"
+sleep 1
+su u -c "$ENVS hyprctl monitors" | grep -E "scale"
+su u -c "$ENVS hyprctl layers" | grep -E "namespace"
+su u -c "$ENVS grim /out/launcher-open.png"
+su u -c "$ENVS wtype alm"
+sleep 0.5
+su u -c "$ENVS grim /out/launcher-typed.png"
+su u -c "$ENVS wtype -k Return"
+sleep 2
+su u -c "$ENVS grim /out/launched.png"
+su u -c "$ENVS hyprctl clients" | grep -E "class|workspace" | head -8
 echo "--- bar"; cat /tmp/bar.log
+echo "--- launcher"; cat /tmp/launcher.log | grep -v "wayland\]"
 echo "--- notifyd"; cat /tmp/notifyd.log
 echo "--- hypr errors"; grep -i -E "error|crash" /tmp/hypr.log | head -5
