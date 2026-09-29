@@ -75,11 +75,16 @@ software renderer): two windows on workspaces 1 and 3, a click on the bar's
   included (`wp_fractional_scale_v1` + `wp_viewporter`), and stays sharp:
   the canvas draws in units, so no drawing code multiplies by the scale.
   `SCALE=1.6 test/hyprland/run.sh` checks it.
-- OSD: next.
+- **OSD** — `osd volume +5 | -5 | mute`, `osd brightness +5 | -5`, bound to
+  the media keys (the lines are in `osd.almd`): the first run becomes the
+  daemon, later ones hand their command over a Unix socket, so repeated
+  presses update one panel. Volume through PipeWire's `wpctl`; brightness
+  written to sysfs, or through logind's `SetBrightness` on the system bus
+  where sysfs is not the user's to write.
 
 ## Next
 
 - Volume and battery from events instead of reads every 5 and 30 s
   (PipeWire's protocol, UPower over D-Bus) — the last periodic wakes.
 - Partial redraw (damage).
-- M2: the volume/brightness OSD.
+- The bar hears of a volume change only at its next 5-second read: events from PipeWire itself.

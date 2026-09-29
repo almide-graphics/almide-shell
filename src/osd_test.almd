@@ -1,0 +1,11 @@
+import self.osd as osd
+
+test "commands as keybindings write them" {
+  assert_eq(osd.parse("volume +5"), some(osd.Volume(5)))
+  assert_eq(osd.parse("volume -10"), some(osd.Volume(-10)))
+  assert_eq(osd.parse("  volume   mute "), some(osd.Mute))
+  assert_eq(osd.parse("brightness 3"), some(osd.Brightness(3)))
+  assert_eq(osd.parse("brightness"), none)
+  assert_eq(osd.parse("volume loud"), none)
+  assert_eq(osd.parse(""), none)
+}

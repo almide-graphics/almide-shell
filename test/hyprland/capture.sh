@@ -17,8 +17,9 @@ cd /w
 $ALMIDE build main.almd -o /tmp/bar 2>&1 | tail -1
 $ALMIDE build notifyd.almd -o /tmp/notifyd 2>&1 | tail -1
 $ALMIDE build launcher.almd -o /tmp/launcher 2>&1 | tail -1
+$ALMIDE build osd.almd -o /tmp/osd 2>&1 | tail -1
 (cd /snaidhm-copy && $ALMIDE build examples/wayland/main.almd -o /tmp/win 2>&1 | tail -1 && $ALMIDE build examples/wayland/drive.almd -o /tmp/drive 2>&1 | tail -1)
-chmod 755 /tmp/bar /tmp/notifyd /tmp/launcher /tmp/win /tmp/drive
+chmod 755 /tmp/bar /tmp/notifyd /tmp/launcher /tmp/osd /tmp/win /tmp/drive
 # Applications for the launcher to find.
 mkdir -p /home/u/.local/share/applications
 for app in "almide-window|Almide Window|/tmp/win 20000|A window written in Almide" "files|Files|true|Browse the file system" "settings|設定|true|システムの設定" "terminal|Terminal|true|Command line" "hidden|Hidden|true|"; do
@@ -97,6 +98,19 @@ T0=$(awk '{print $14+$15}' /proc/$BAR/stat); sleep 20; T1=$(awk '{print $14+$15}
 echo "idle: $((T1 - T0)) clock ticks of CPU in 20 s (of $((20 * $(getconf CLK_TCK))))"
 echo "rss: $(awk '/VmRSS/{print $2, $3}' /proc/$BAR/status)"
 su u -c "$ENVS hyprctl activeworkspace -j" | grep '"id"' | head -1
+# The OSD: the first command starts the daemon, the next ones go to it.
+su u -c "$ENVS /tmp/osd volume +8 > /tmp/osd.log 2>&1 &"
+sleep 1
+su u -c "$ENVS /tmp/osd volume +8; wpctl get-volume @DEFAULT_AUDIO_SINK@"
+sleep 0.3
+su u -c "$ENVS grim /out/osd-volume.png"
+su u -c "$ENVS /tmp/osd volume mute; wpctl get-volume @DEFAULT_AUDIO_SINK@"
+sleep 0.3
+su u -c "$ENVS grim /out/osd-muted.png"
+su u -c "$ENVS /tmp/osd volume mute"
+sleep 2
+su u -c "$ENVS hyprctl layers" | grep -c almide-osd | sed 's/^/osd layers after 2 s: /'
+su u -c "$ENVS /tmp/osd brightness +5; /tmp/osd louder" 2>&1 | head -1
 # The launcher: type, pick, start.
 su u -c "$ENVS hyprctl dispatch workspace 5 >/dev/null"
 su u -c "$ENVS WAYLAND_DEBUG=${CLIENT_DEBUG:-} /tmp/launcher > /tmp/launcher.log 2>&1 &"
@@ -114,4 +128,5 @@ su u -c "$ENVS hyprctl clients" | grep -E "class|workspace" | head -8
 echo "--- bar"; cat /tmp/bar.log
 echo "--- launcher"; cat /tmp/launcher.log | grep -v "wayland\]"
 echo "--- notifyd"; cat /tmp/notifyd.log
+echo "--- osd"; cat /tmp/osd.log
 echo "--- hypr errors"; grep -i -E "error|crash" /tmp/hypr.log | head -5

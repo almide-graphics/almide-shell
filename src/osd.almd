@@ -1,0 +1,69 @@
+// almide-shell osd — what a volume or brightness key just did, on screen
+//
+// `osd volume +5` (bound to the volume keys) changes the volume and shows the
+// new level in a small panel near the bottom of the output for a moment.
+// One process shows it: the first `osd` becomes the daemon, and each later
+// one hands its command over the daemon's socket and exits, so pressing a key
+// again updates the panel that is up instead of opening another.
+
+import snaidhm.cpu.canvas as canvas
+import snaidhm.sfnt as sfnt
+import self.bar as bar
+import self.config as config
+
+type Command =
+  | Volume(Int)
+  | Mute
+  | Brightness(Int)
+
+/// What the panel shows: a label, a level in percent, and whether it is off
+/// (muted).
+type Level = { label: String, percent: Int, off: Bool }
+
+let WIDTH = 300
+let HEIGHT = 64
+/// Distance from the bottom of the output.
+let MARGIN = 80
+/// How long the panel stays after the last change.
+let SHOW_MS = 1500
+
+/// A command as written on the command line (or sent over the socket):
+/// `volume +5`, `volume -5`, `volume mute`, `brightness +10`.
+fn parse(text: String) -> Command? = {
+  let words = string.split(string.trim(text), " ") |> list.filter((w) => w != "")
+  let step = (w: String) => int.parse(if string.starts_with(w, "+") then string.slice(w, 1) else w)
+  match words {
+    ["volume", "mute"] => some(Mute),
+    ["volume", w] => match step(w) { ok(n) => some(Volume(n)), err(_) => none },
+    ["brightness", w] => match step(w) { ok(n) => some(Brightness(n)), err(_) => none },
+    _ => none,
+  }
+}
+
+/// The panel drawn on `frame` (the window's pixels, drawn on in units).
+fn render(faces: List[sfnt.Font], l: Level, frame: canvas.Canvas) -> Bytes = {
+  let th = config.THEME
+  let bg = bar.rgba(th.background)
+  let fg = bar.rgba(th.foreground)
+  let dim = bar.rgba(th.dim)
+  let fill = if l.off then dim else bar.rgba(th.accent)
+  var c = frame
+  let w = canvas.width(c)
+  let h = canvas.height(c)
+  c = canvas.rect(c, 0.0, 0.0, w, h, 14.0, bg.0, bg.1, bg.2, 0.96)
+  let pad = 18.0
+  let text = if l.off then "${l.label}  muted" else l.label
+  c = canvas.draw_text(c, faces, bar.text_codes(text), th.font_size, pad, 26.0, fg.0, fg.1, fg.2, 1.0)
+  let pct = "${int.to_string(l.percent)}%"
+  let pw = canvas.measure(faces, bar.text_codes(pct), th.font_size)
+  c = canvas.draw_text(c, faces, bar.text_codes(pct), th.font_size, w - pad - pw, 26.0, fg.0, fg.1, fg.2, 1.0)
+  // The level: a track, filled to the percent.
+  let y0 = h - 24.0
+  let y1 = h - 16.0
+  c = canvas.rect(c, pad, y0, w - pad, y1, 4.0, dim.0, dim.1, dim.2, 0.5)
+  let full = pad + (w - 2.0 * pad) * int.to_float(int.clamp(l.percent, 0, 100)) / 100.0
+  if l.percent > 0 then {
+    c = canvas.rect(c, pad, y0, float.max(full, pad + 8.0), y1, 4.0, fill.0, fill.1, fill.2, 1.0)
+  } else ()
+  c.px
+}

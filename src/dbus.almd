@@ -396,7 +396,18 @@ fn address_path(address: String) -> String = {
 /// Connect to the session bus and say Hello; our unique name.
 effect fn connect() -> Result[String, String] = {
   let address = env.get("DBUS_SESSION_BUS_ADDRESS") ?? ""
-  let path = if address == "" then "${env.get("XDG_RUNTIME_DIR") ?? "/tmp"}/bus" else address_path(address)
+  connect_to(if address == "" then "${env.get("XDG_RUNTIME_DIR") ?? "/tmp"}/bus" else address_path(address), address)
+}
+
+/// Connect to the system bus (logind, UPower) instead; one bus per program.
+effect fn connect_system() -> Result[String, String] = {
+  let address = env.get("DBUS_SYSTEM_BUS_ADDRESS") ?? ""
+  connect_to(if address == "" then "/run/dbus/system_bus_socket" else address_path(address), address)
+}
+
+/// Connect to the bus at socket `path` (from `address`, for the message when
+/// it names no socket).
+effect fn connect_to(path: String, address: String) -> Result[String, String] = {
   if path == "" then err("unsupported bus address: ${address}")
   else {
     sock = net.unix_connect(path)!

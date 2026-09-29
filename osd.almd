@@ -1,0 +1,150 @@
+// almide-shell osd — volume and brightness keys, with a panel that shows the level
+//
+//   osd                      run the daemon (exec-once = osd)
+//   osd volume +5 | -5 | mute
+//   osd brightness +5 | -5
+//
+// In hyprland.conf:
+//   bindel = , XF86AudioRaiseVolume, exec, osd volume +5
+//   bindel = , XF86AudioLowerVolume, exec, osd volume -5
+//   bindl  = , XF86AudioMute, exec, osd volume mute
+//   bindel = , XF86MonBrightnessUp, exec, osd brightness +5
+//   bindel = , XF86MonBrightnessDown, exec, osd brightness -5
+//
+// A command goes to the running daemon over $XDG_RUNTIME_DIR/almide-osd.sock;
+// with no daemon, the command's own process becomes it.
+
+import env
+import fs
+import process
+import net
+import snaidhm.wayland.window as window
+import snaidhm.native.fonts as fonts
+import snaidhm.cpu.canvas as canvas
+import snaidhm.sfnt as sfnt
+import self.osd as osd
+import self.sys as sys
+
+effect fn socket_path() -> String = "${env.get("XDG_RUNTIME_DIR") ?? "/tmp"}/almide-osd.sock"
+
+/// Carry out `cmd`; the level to show, or none when there is nothing to show
+/// (no audio server, no backlight).
+effect fn apply(cmd: osd.Command) -> Result[osd.Level?, String] = {
+  match cmd {
+    osd.Volume(delta) => {
+      sys.change_volume(delta)!
+      ok(sound_level()!)
+    },
+    osd.Mute => {
+      sys.toggle_mute()!
+      ok(sound_level()!)
+    },
+    osd.Brightness(delta) => match sys.change_brightness(sys.BACKLIGHT, delta)! {
+      some(l) => ok(some({ label: "Brightness", percent: sys.percent_of(l), off: false })),
+      none => ok(none),
+    },
+  }
+}
+
+effect fn sound_level() -> osd.Level? = match sys.volume()! {
+  some(s) => some({ label: "Volume", percent: s.percent, off: s.muted }),
+  none => none,
+}
+
+effect fn show(faces: List[sfnt.Font], l: osd.Level) -> Result[Unit, String] = {
+  if not window.shown() then {
+    let _ = window.open_layer("almide-osd", window.LAYER_OVERLAY, window.ANCHOR_BOTTOM, osd.WIDTH, osd.HEIGHT, 0, 0, osd.MARGIN)!
+  } else ()
+  window.present(osd.render(faces, l, canvas.scaled(window.width(), window.height(), window.scale())))!
+  // Drawn at the size and scale there are now.
+  let _ = window.resized()
+  ok(())
+}
+
+/// Carry out `cmds`; the level the last of them left to show. A command
+/// that fails (no wpctl, a backlight it may not set) is reported and
+/// skipped: the daemon outlives it.
+effect fn run(cmds: List[osd.Command]) -> osd.Level? = {
+  var out: osd.Level? = none
+  for cmd in cmds {
+    match apply(cmd) {
+      ok(some(l)) => { out = some(l) },
+      ok(none) => (),
+      err(e) => eprintln("osd: ${e}"),
+    }
+  }
+  out
+}
+
+/// Run the daemon: listen, carry out each command that arrives, show the
+/// level, and take the panel away once the keys have been still a moment.
+effect fn serve(first: osd.Command?) -> Result[Unit, String] = {
+  let path = socket_path()!
+  // A socket left by a daemon that did not exit cleanly.
+  let _ = fs.remove(path)
+  let listener = net.unix_listen(path)!
+  let faces = fonts.system()!
+  var shown: osd.Level? = none
+  var hide_at = 0 - 1
+  var level = run(match first { some(c) => [c], none => [] })!
+  while true {
+    match level {
+      some(l) => {
+        show(faces, l)!
+        shown = some(l)
+        hide_at = env.millis() + osd.SHOW_MS
+      },
+      none => (),
+    }
+    level = none
+    let wait = if hide_at < 0 then 0 - 1 else int.max(0, hide_at - env.millis())
+    let fds = if window.shown() then [listener, window.fd()] else [listener]
+    let ready = net.unix_wait(fds, wait)!
+    if list.contains(ready, listener) then {
+      let conn = net.unix_accept(listener)!
+      if net.unix_poll(conn, 200)! then {
+        let text = bytes.to_string_lossy(net.unix_recv(conn, 256)!)
+        level = run(string.lines(text) |> list.filter_map((line) => osd.parse(line)))!
+        // Done: the sender may read the new state now.
+        let _ = net.unix_send(conn, bytes.from_string("ok\n"), [])
+      } else ()
+      net.unix_close(conn)!
+    } else ()
+    if window.shown() then {
+      let _ = window.pump(0)!
+      // Redrawn at a new scale if the output's changed under it.
+      match shown {
+        some(l) => if window.resized() then show(faces, l)! else (),
+        none => (),
+      }
+    } else ()
+    if hide_at >= 0 and env.millis() >= hide_at then {
+      if window.shown() then window.hide()! else ()
+      hide_at = 0 - 1
+      shown = none
+    } else ()
+  }
+  ok(())
+}
+
+effect fn main() -> Unit = {
+  let args = env.args()
+  let text = args |> list.join(" ")
+  let cmd = osd.parse(text)
+  if list.len(args) > 0 and cmd == none then {
+    println("usage: osd [volume +N | volume -N | volume mute | brightness +N | brightness -N]")
+    process.exit(2)
+  } else ()
+  // Hand the command to a daemon that is already up; else become it.
+  match net.unix_connect(socket_path()!) {
+    ok(sock) => {
+      if cmd != none then {
+        net.unix_send(sock, bytes.from_string("${text}\n"), [])!
+        // Return once the daemon has carried it out.
+        if net.unix_poll(sock, 2000)! then { let _ = net.unix_recv(sock, 16)! } else ()
+      } else ()
+      net.unix_close(sock)!
+    },
+    err(_) => serve(cmd)!,
+  }
+}
