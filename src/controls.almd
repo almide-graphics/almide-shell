@@ -1,0 +1,74 @@
+// almide-shell controls — changing the machine's state: the volume keys'
+// and brightness keys' work (osd.almd)
+
+import fs
+import process
+import self.dbus as dbus
+
+/// Change the default output's volume by `delta` percent, up to 100 %.
+effect fn change_volume(delta: Int) -> Result[Unit, String] = {
+  let step = if delta >= 0 then "${int.to_string(delta)}%+" else "${int.to_string(0 - delta)}%-"
+  let _ = process.exec("wpctl", ["set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", step])!
+  ok(())
+}
+
+/// Mute the default output, or unmute it.
+effect fn toggle_mute() -> Result[Unit, String] = {
+  let _ = process.exec("wpctl", ["set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"])!
+  ok(())
+}
+
+/// A backlight: its device (the directory under /sys/class/backlight), its
+/// level and the highest level.
+type Light = { device: String, level: Int, max: Int }
+
+let BACKLIGHT = "/sys/class/backlight"
+
+/// The level in percent.
+fn percent_of(l: Light) -> Int = if l.max <= 0 then 0 else (l.level * 100 + l.max / 2) / l.max
+
+effect fn backlight() -> Light? = backlight_at(BACKLIGHT)!
+
+/// `backlight()` from a directory laid out as sysfs's backlight class.
+effect fn backlight_at(base: String) -> Light? = {
+  let names = match fs.list_dir(base) { ok(ns) => list.sort(ns), err(_) => [] }
+  match list.first(names) {
+    none => none,
+    some(dev) => {
+      let read = (f: String) => match fs.read_text("${base}/${dev}/${f}") {
+        ok(t) => int.parse(string.trim(t)) ?? 0,
+        err(_) => 0,
+      }
+      some({ device: dev, level: read("brightness"), max: read("max_brightness") })
+    },
+  }
+}
+
+/// The level `delta` percent away from `l`'s, kept between 1 % (a dark
+/// screen is one nobody can find the key for) and the maximum.
+fn stepped(l: Light, delta: Int) -> Int = {
+  let lowest = int.max(1, l.max / 100)
+  int.clamp(l.level + delta * l.max / 100, lowest, l.max)
+}
+
+/// Set the backlight `delta` percent brighter or darker: by writing sysfs
+/// where the user may (the video group, a udev rule), else through logind,
+/// which lets the session's own user set it.
+effect fn change_brightness(base: String, delta: Int) -> Result[Light?, String] = {
+  match backlight_at(base)! {
+    none => ok(none),
+    some(l) => {
+      let level = stepped(l, delta)
+      match fs.write("${base}/${l.device}/brightness", int.to_string(level)) {
+        ok(_) => (),
+        err(_) => {
+          let _ = dbus.connect_system()!
+          let _ = dbus.call("org.freedesktop.login1", "/org/freedesktop/login1/session/auto",
+            "org.freedesktop.login1.Session", "SetBrightness",
+            [dbus.Str("backlight"), dbus.Str(l.device), dbus.UInt32(level)])!
+        },
+      }
+      ok(some({ ...l, level: level }))
+    },
+  }
+}

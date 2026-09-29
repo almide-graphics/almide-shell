@@ -39,13 +39,22 @@ effect fn refresh_workspaces(st: bar.State) -> Result[bar.State, String] =
     err(_) => ok(st),
   }
 
+/// Which of `p`'s handlers input `kind` runs: left or right button (`code`
+/// 0 or 1) pressed, or the wheel turned up (`dy` < 0) or down.
+fn pointer_handler(p: bar.Piece, kind: Int, code: Int, dy: Float) -> String =
+  if kind == window.MOUSE_DOWN and code == 0 then p.on_click
+  else if kind == window.MOUSE_DOWN and code == 1 then p.on_right_click
+  else if kind == window.WHEEL and dy < 0.0 then p.on_scroll_up
+  else if kind == window.WHEEL and dy > 0.0 then p.on_scroll_down
+  else ""
+
 /// A frame for the bar: the window's pixels, drawn on in units.
 fn frame() -> canvas.Canvas = canvas.scaled(window.width(), window.height(), window.scale())
 
 effect fn main() -> Unit = {
   let th = config.THEME
-  let anchors = int.bor(int.bor(window.ANCHOR_TOP, window.ANCHOR_LEFT), window.ANCHOR_RIGHT)
-  if window.open_layer("almide-bar", window.LAYER_TOP, anchors, 0, th.height, th.height, 0, 0)! then {
+  if window.open_layer("almide-bar", layer: window.Top, anchor: [window.TopEdge, window.LeftEdge, window.RightEdge],
+       height: th.height, exclusive: th.height)! then {
     let faces = fonts.system()!
     let zone = tz.system()!
     let events = hypr.events() ?? (0 - 1)
@@ -78,13 +87,17 @@ effect fn main() -> Unit = {
           next = refresh_workspaces(next)!
         } else ()
       } else ()
-      // Clicks: a workspace button switches to it.
+      // The pointer: the handler of the piece under it, for a click, a right
+      // click or a turn of the wheel.
       var kind = window.next_event()
       while kind != window.NONE {
-        if kind == window.MOUSE_DOWN and window.event_code() == 0 then {
-          let action = bar.hit(faces, next, window.extent().0, window.event_x())
-          if action != "" then { let _ = hypr.dispatch(action) } else ()
-        } else ()
+        match bar.at(faces, next, window.extent().0, window.event_x()) {
+          some(p) => {
+            let handler = pointer_handler(p, kind, window.event_code(), window.event_dy())
+            if handler != "" then { let _ = hypr.dispatch(handler) } else ()
+          },
+          none => (),
+        }
         kind = window.next_event()
       }
       let t2 = datetime.now()

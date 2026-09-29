@@ -2,8 +2,16 @@
 //
 // Each module becomes pieces of text (a workspace button is one piece); the
 // left group runs from the left edge, the right group ends at the right edge,
-// the centre group is centred. A piece may carry an action — the Hyprland
-// dispatcher a click on it runs.
+// the centre group is centred.
+//
+// A piece reacts to the pointer through its handlers — each a Hyprland
+// dispatcher ("workspace 3", "exec wpctl set-mute @DEFAULT_AUDIO_SINK@
+// toggle"), "" for none — run on a click, a right click, or a turn of the
+// wheel over it:
+//
+//   Piece { text: "vol 42%", color: th.foreground,
+//     on_click: "exec wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
+//     on_scroll_up: "exec wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+" }
 
 import snaidhm.cpu.canvas as canvas
 import snaidhm.sfnt as sfnt
@@ -22,14 +30,24 @@ type State = {
   outputs: Map[String, String],
 }
 
-/// A piece of the bar: its text, colour, whether it sits on a highlight, and
-/// the dispatcher a click runs ("" for none).
-type Piece = { text: String, color: String, boxed: Bool, action: String }
+/// A piece of the bar: its text and colour; `boxed` puts it on the accent
+/// highlight, `button` gives it a button's padding (the workspaces); the
+/// `on_*` handlers are the Hyprland dispatchers the pointer runs on it.
+type Piece = {
+  text: String,
+  color: String,
+  boxed: Bool = false,
+  button: Bool = false,
+  on_click: String = "",
+  on_right_click: String = "",
+  on_scroll_up: String = "",
+  on_scroll_down: String = "",
+}
 
 /// A piece placed at `x`, `w` wide.
 type Placed = { piece: Piece, x: Float, w: Float }
 
-fn piece(text: String, color: String) -> Piece = { text: text, color: color, boxed: false, action: "" }
+fn piece(text: String, color: String) -> Piece = Piece { text: text, color: color }
 
 fn hex(s: String, at: Int) -> Float = int.to_float(int.from_hex(string.slice(s, at, at + 2)) ?? 0) / 255.0
 
@@ -50,11 +68,12 @@ fn clock(t: Int, pattern: String) -> String = {
 fn pieces(m: config.Module, st: State) -> List[Piece] = {
   let th = config.THEME
   match m {
-    config.Workspaces => st.workspaces |> list.map((w) => {
+    config.Workspaces => st.workspaces |> list.map((w) => Piece {
       text: if w.name == "" then int.to_string(w.id) else w.name,
       color: if w.id == st.active then th.background else th.foreground,
       boxed: w.id == st.active,
-      action: "workspace ${int.to_string(w.id)}",
+      button: true,
+      on_click: "workspace ${int.to_string(w.id)}",
     }),
     config.Clock(pattern) => [piece(clock(st.now, pattern), th.foreground)],
     config.Battery => match st.power {
@@ -75,7 +94,7 @@ fn group(ms: List[config.Module], st: State) -> List[Piece] = ms |> list.flat_ma
 /// Pixel width of a piece's box (text plus its padding when boxed).
 fn width_of(faces: List[sfnt.Font], p: Piece) -> Float = {
   let inner = canvas.measure(faces, text_codes(p.text), config.THEME.font_size)
-  if p.boxed or p.action != "" then inner + 16.0 else inner
+  if p.boxed or p.button then inner + 16.0 else inner
 }
 
 fn text_codes(s: String) -> List[Int] = {
@@ -94,7 +113,7 @@ fn place(faces: List[sfnt.Font], ps: List[Piece], x: Float, gap: Float) -> List[
   for i in 0..<n {
     let w = width_of(faces, ps[i])
     list.push(out, { piece: ps[i], x: at, w: w })
-    at = at + w + (if ps[i].action != "" then 4.0 else gap)
+    at = at + w + (if ps[i].button then 4.0 else gap)
   }
   out
 }
@@ -132,7 +151,7 @@ fn render(faces: List[sfnt.Font], st: State, frame: canvas.Canvas) -> Bytes = {
   let n = list.len(placed)
   for i in 0..<n {
     let p = placed[i]
-    let tx = if p.piece.boxed or p.piece.action != "" then p.x + 8.0 else p.x
+    let tx = if p.piece.boxed or p.piece.button then p.x + 8.0 else p.x
     if p.piece.boxed then {
       let a = rgba(th.accent)
       c = canvas.rect(c, p.x, 4.0, p.x + p.w, height - 4.0, 6.0, a.0, a.1, a.2, a.3)
@@ -143,11 +162,11 @@ fn render(faces: List[sfnt.Font], st: State, frame: canvas.Canvas) -> Bytes = {
   c.px
 }
 
-/// The action of the piece at `x` on a bar `width` units wide, or "".
-fn hit(faces: List[sfnt.Font], st: State, width: Float, x: Float) -> String =
-  match layout(faces, st, width) |> list.find((p) => p.piece.action != "" and x >= p.x and x < p.x + p.w) {
-    some(p) => p.piece.action,
-    none => "",
+/// The piece at `x` on a bar `width` units wide, if any.
+fn at(faces: List[sfnt.Font], st: State, width: Float, x: Float) -> Piece? =
+  match layout(faces, st, width) |> list.find((p) => x >= p.x and x < p.x + p.w) {
+    some(p) => some(p.piece),
+    none => none,
   }
 
 /// What the bar shows, as one string: redraw only when it changes.

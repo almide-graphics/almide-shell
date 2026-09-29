@@ -79,15 +79,15 @@ effect fn launch(app: apps.App) -> Result[Unit, String] = {
 
 effect fn main() -> Unit = {
   let all = apps.all()!
-  let all_edges = int.bor(int.bor(window.ANCHOR_TOP, window.ANCHOR_BOTTOM), int.bor(window.ANCHOR_LEFT, window.ANCHOR_RIGHT))
   // Stretched over the output first, to learn its room (nothing is shown
   // before the first frame); then as big as fits, anchored to no edge —
   // centred. Keyboard: exclusive.
-  if window.open_layer("almide-launcher", window.LAYER_OVERLAY, all_edges, 0, 0, 0, 1, 0)! then {
+  if window.open_layer("almide-launcher", layer: window.Overlay,
+    anchor: [window.TopEdge, window.BottomEdge, window.LeftEdge, window.RightEdge], keyboard: window.ExclusiveKeyboard)! then {
     let room = window.extent()
     let w = int.min(WIDTH, float.to_int(room.0) - 2 * EDGE)
     let rows = int.clamp((float.to_int(room.1) - 2 * EDGE - height_for(0)) / ROW_H, 1, ROWS)
-    window.anchor_layer(0)!
+    window.anchor_layer([])!
     window.resize_layer(w, height_for(rows))!
     let faces = fonts.system()!
     var query = ""

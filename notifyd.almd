@@ -74,8 +74,8 @@ effect fn show(faces: List[sfnt.Font]) -> Result[Unit, String] = {
   } else {
     let h = notify.height(faces, notes)
     if not window.shown() then {
-      let anchors = int.bor(window.ANCHOR_TOP, window.ANCHOR_RIGHT)
-      let _ = window.open_layer("almide-notifications", window.LAYER_OVERLAY, anchors, notify.WIDTH, h, 0, 0, notify.MARGIN)!
+      let _ = window.open_layer("almide-notifications", layer: window.Overlay,
+        anchor: [window.TopEdge, window.RightEdge], width: notify.WIDTH, height: h, margin: notify.MARGIN)!
     } else if window.extent().1 != int.to_float(h) then {
       window.resize_layer(notify.WIDTH, h)!
     } else ()

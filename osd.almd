@@ -23,6 +23,7 @@ import snaidhm.native.fonts as fonts
 import snaidhm.cpu.canvas as canvas
 import snaidhm.sfnt as sfnt
 import self.osd as osd
+import self.controls as controls
 import self.sys as sys
 
 effect fn socket_path() -> String = "${env.get("XDG_RUNTIME_DIR") ?? "/tmp"}/almide-osd.sock"
@@ -32,15 +33,15 @@ effect fn socket_path() -> String = "${env.get("XDG_RUNTIME_DIR") ?? "/tmp"}/alm
 effect fn apply(cmd: osd.Command) -> Result[osd.Level?, String] = {
   match cmd {
     osd.Volume(delta) => {
-      sys.change_volume(delta)!
+      controls.change_volume(delta)!
       ok(sound_level()!)
     },
     osd.Mute => {
-      sys.toggle_mute()!
+      controls.toggle_mute()!
       ok(sound_level()!)
     },
-    osd.Brightness(delta) => match sys.change_brightness(sys.BACKLIGHT, delta)! {
-      some(l) => ok(some({ label: "Brightness", percent: sys.percent_of(l), off: false })),
+    osd.Brightness(delta) => match controls.change_brightness(controls.BACKLIGHT, delta)! {
+      some(l) => ok(some({ label: "Brightness", percent: controls.percent_of(l), off: false })),
       none => ok(none),
     },
   }
@@ -53,7 +54,8 @@ effect fn sound_level() -> osd.Level? = match sys.volume()! {
 
 effect fn show(faces: List[sfnt.Font], l: osd.Level) -> Result[Unit, String] = {
   if not window.shown() then {
-    let _ = window.open_layer("almide-osd", window.LAYER_OVERLAY, window.ANCHOR_BOTTOM, osd.WIDTH, osd.HEIGHT, 0, 0, osd.MARGIN)!
+    let _ = window.open_layer("almide-osd", layer: window.Overlay, anchor: [window.BottomEdge],
+      width: osd.WIDTH, height: osd.HEIGHT, margin: osd.MARGIN)!
   } else ()
   window.present(osd.render(faces, l, canvas.scaled(window.width(), window.height(), window.scale())))!
   // Drawn at the size and scale there are now.

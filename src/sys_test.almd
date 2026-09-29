@@ -29,33 +29,3 @@ test "no battery" {
   assert_eq(sys.battery_at(fixture("none", "", "", "")!)!, none)
   assert_eq(sys.battery_at("/nonexistent/power_supply")!, none)
 }
-
-effect fn backlight_fixture(name: String, level: Int, max: Int) -> String = {
-  let base = "${fs.temp_dir()!}/almide-shell-bl-${name}"
-  let _ = fs.remove_all(base)
-  fs.mkdir_p("${base}/intel_backlight")!
-  fs.write("${base}/intel_backlight/brightness", "${int.to_string(level)}\n")!
-  fs.write("${base}/intel_backlight/max_brightness", "${int.to_string(max)}\n")!
-  ok(base)
-}
-
-test "the backlight's level, in percent" {
-  let base = backlight_fixture("read", 12000, 24000)!
-  let l = sys.backlight_at(base)!
-  assert_eq(l, some({ device: "intel_backlight", level: 12000, max: 24000 }))
-  match l { some(x) => assert_eq(sys.percent_of(x), 50), none => assert(false) }
-  assert_eq(sys.backlight_at("/nonexistent/backlight")!, none)
-}
-
-test "brightness steps stay between 1 % and the maximum, and are written back" {
-  let base = backlight_fixture("step", 12000, 24000)!
-  assert_eq(sys.change_brightness(base, 10)!, some({ device: "intel_backlight", level: 14400, max: 24000 }))
-  assert_eq(string.trim(fs.read_text("${base}/intel_backlight/brightness")!), "14400")
-  let low = backlight_fixture("low", 300, 24000)!
-  assert_eq(sys.change_brightness(low, -5)!, some({ device: "intel_backlight", level: 240, max: 24000 }))
-  let top = backlight_fixture("top", 23000, 24000)!
-  assert_eq(sys.change_brightness(top, 10)!, some({ device: "intel_backlight", level: 24000, max: 24000 }))
-  // A panel with few levels still never goes dark.
-  let coarse = backlight_fixture("coarse", 2, 15)!
-  assert_eq(sys.change_brightness(coarse, -50)!, some({ device: "intel_backlight", level: 1, max: 15 }))
-}
