@@ -1,0 +1,53 @@
+import self.apps as apps
+
+let TERMINAL = """
+  [Desktop Entry]
+  Type=Application
+  Name=Terminal
+  Name[ja]=端末
+  Comment=Command line
+  Exec=foot --title %c %U
+
+  [Desktop Action new-window]
+  Name=New Window
+  Exec=foot --new
+  """
+
+test "an entry's fields come from its [Desktop Entry] group only" {
+  assert_eq(apps.entry_value(TERMINAL, "Name"), "Terminal")
+  assert_eq(apps.entry_value(TERMINAL, "Exec"), "foot --title %c %U")
+  assert_eq(apps.entry_value(TERMINAL, "Icon"), "")
+  match apps.parse("foot.desktop", TERMINAL) {
+    some(app) => {
+      assert_eq(app.name, "Terminal")
+      assert_eq(app.exec, "foot --title")
+      assert_eq(app.comment, "Command line")
+    },
+    none => assert(false),
+  }
+}
+
+test "field codes are dropped, %% is a percent sign" {
+  assert_eq(apps.command("app %F"), "app")
+  assert_eq(apps.command("printf 100%% %u"), "printf 100%")
+}
+
+test "hidden entries, links and entries without Exec are not listed" {
+  assert(apps.parse("a", "[Desktop Entry]\nType=Application\nName=A\nExec=a\nNoDisplay=true\n") == none)
+  assert(apps.parse("b", "[Desktop Entry]\nType=Link\nName=B\nURL=https://example.com\n") == none)
+  assert(apps.parse("c", "[Desktop Entry]\nType=Application\nName=C\n") == none)
+}
+
+test "matches are characters in order, the start and word starts first" {
+  let all = [
+    { id: "1", name: "Files", exec: "f", comment: "" },
+    { id: "2", name: "Firefox", exec: "ff", comment: "" },
+    { id: "3", name: "Almide Window", exec: "w", comment: "" },
+    { id: "4", name: "Terminal", exec: "t", comment: "" },
+  ]
+  assert_eq(apps.filter(all, "fi") |> list.map((a) => a.name), ["Files", "Firefox"])
+  assert_eq(apps.filter(all, "aw") |> list.map((a) => a.name), ["Almide Window"])
+  assert_eq(apps.filter(all, "win") |> list.map((a) => a.name), ["Almide Window"])
+  assert_eq(apps.filter(all, "xyz") |> list.map((a) => a.name), [])
+  assert_eq(list.len(apps.filter(all, "")), 4)
+}

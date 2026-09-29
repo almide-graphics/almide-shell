@@ -33,10 +33,12 @@ fn entry_value(text: String, key: String) -> String = {
   out
 }
 
-/// `Exec` without its field codes (%f %u %F %U %i %c %k ...).
+/// `Exec` without its field codes (%f %u %F %U %i %c %k ...); `%%` is a
+/// literal `%`.
 fn command(exec: String) -> String =
   string.split(exec, " ")
-    |> list.filter((w) => not (string.starts_with(w, "%") and string.len(w) == 2))
+    |> list.filter((w) => w == "%%" or not (string.starts_with(w, "%") and string.len(w) == 2))
+    |> list.map((w) => string.replace(w, "%%", "%"))
     |> list.join(" ")
 
 /// The app a desktop file describes, or none when it should not be listed.
