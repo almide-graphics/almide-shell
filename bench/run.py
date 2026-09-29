@@ -22,7 +22,7 @@ import argparse, datetime, json, os, re, shutil, subprocess, sys, tempfile
 
 BENCH = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(BENCH)
-TASKS = os.path.join(BENCH, "tasks")
+TASKS = os.path.join(BENCH, os.environ.get("BENCH_TASKS", "tasks"))
 DOCKER = ["docker", "--context", os.environ.get("BENCH_CONTEXT", "colima-bench")]
 LANG_NAME = {"almide": "Almide", "qml": "QML (Quickshell)"}
 SOURCE_EXT = {"almide": (".almd",), "qml": (".qml", ".js")}
@@ -99,7 +99,19 @@ def apply_reply(workdir, lang, reply):
     return changed
 
 
+# A build that failed on fetching, not on the code: the attempt is judged again.
+INFRA = re.compile(r"failed to get `|Could not resolve host|failed to fetch|Failed to fetch|spurious network error")
+
+
 def verify(workdir, lang, task):
+    for _ in range(3):
+        res, log = verify_once(workdir, lang, task)
+        if res["build"] == "ok" or not INFRA.search(section(log, "build")):
+            break
+    return res, log
+
+
+def verify_once(workdir, lang, task):
     cmd = DOCKER + [
         "run", "--rm", "--privileged", "--hostname", "almide-box", "--dns", "1.1.1.1",
         "-v", "/dev/dri:/dev/dri", "-v", "/run/udev:/run/udev:ro",
@@ -112,8 +124,7 @@ def verify(workdir, lang, task):
     log = r.stdout + r.stderr
     m = re.search(r"RESULT build=(\w+) runs=(\w+) task=(\w+) alive=(\w+)", log)
     res = dict(zip(["build", "runs", "task", "alive"], m.groups())) if m else {"build": "?", "runs": "?", "task": "?", "alive": "?"}
-    res["ok"] = res == {"build": "ok", "runs": "ok", "task": "pass", "alive": "ok"} or (
-        res.get("build") == "ok" and res.get("runs") == "ok" and res.get("task") == "pass" and res.get("alive") == "ok")
+    res["ok"] = res["build"] == "ok" and res["runs"] == "ok" and res["task"] == "pass" and res["alive"] == "ok"
     return res, log
 
 
@@ -185,8 +196,8 @@ def run(args):
     summarize(out)
 
 
-def summarize(out):
-    rows = [json.loads(l) for l in open(os.path.join(out, "results.jsonl"))]
+def summarize(out, name="results.jsonl"):
+    rows = [json.loads(l) for l in open(os.path.join(out, name))]
     rows = [r for r in rows if r["attempts"] and "error" not in r["attempts"][0]]
     langs = sorted({r["lang"] for r in rows})
     tasks = sorted({r["task"] for r in rows})
@@ -214,6 +225,42 @@ def summarize(out):
     lines += ["", "✓ first try · ↻ after one retry · ✗ neither"]
     open(os.path.join(out, "summary.md"), "w").write("\n".join(lines) + "\n")
     print("\n".join(lines))
+
+
+def rescore(args):
+    """Judge every recorded attempt again with the current checks, without
+    asking the model anything: the replies are kept, the verdicts redone.
+    Writes results.rescored.jsonl and summary.md from it."""
+    model_slug = re.sub(r"[^A-Za-z0-9_.-]", "_", args.model)
+    out = os.path.join(BENCH, "results", args.date, model_slug)
+    rows = [json.loads(l) for l in open(os.path.join(out, "results.jsonl"))]
+    path = os.path.join(out, "results.rescored.jsonl")
+    done = {}
+    if os.path.exists(path):
+        for l in open(path):
+            r = json.loads(l)
+            done[(r["task"], r["lang"], r["trial"])] = r
+    with open(path, "a") as f:
+        for r in rows:
+            key = (r["task"], r["lang"], r["trial"])
+            if key in done or not r["attempts"] or "error" in r["attempts"][0]:
+                continue
+            base = os.path.join(out, "work", r["task"], r["lang"], str(r["trial"]))
+            new = []
+            for n, old in enumerate(r["attempts"], 1):
+                res, log = verify(os.path.join(base, f"attempt{n}"), r["lang"], r["task"])
+                open(os.path.join(base, f"verify{n}.rescored.log"), "w").write(log)
+                res["changed"] = old.get("changed", [])
+                new.append(res)
+                print(f"{r['task']} {r['lang']} t{r['trial']} a{n}: was {'PASS' if old['ok'] else 'fail'}, now {'PASS' if res['ok'] else 'fail'}", flush=True)
+                # A first attempt that now passes needed no retry.
+                if res["ok"]:
+                    break
+            if not new[-1]["ok"] and len(new) == 1 and len(r["attempts"]) == 1:
+                new[0]["retry_not_recorded"] = True
+            f.write(json.dumps({**r, "attempts": new}) + "\n")
+            f.flush()
+    summarize(out, "results.rescored.jsonl")
 
 
 def verify_refs(args):
@@ -251,6 +298,7 @@ if __name__ == "__main__":
     ap.add_argument("--date", default=datetime.date.today().isoformat())
     ap.add_argument("--reference", default=os.path.join(os.path.dirname(os.path.dirname(ROOT)), "almide", "almide", "docs", "CHEATSHEET.md"))
     ap.add_argument("--verify-refs", action="store_true")
+    ap.add_argument("--rescore", action="store_true")
     a = ap.parse_args()
     os.makedirs(os.path.join(BENCH, "results"), exist_ok=True)
-    sys.exit(verify_refs(a) if a.verify_refs else run(a))
+    sys.exit(verify_refs(a) if a.verify_refs else rescore(a) if a.rescore else run(a))
