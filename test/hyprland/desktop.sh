@@ -8,7 +8,7 @@ set -u
 if [ -d /ceangal ]; then
   mkdir -p /ceangal-copy && (cd /ceangal && tar --exclude=./target -cf - . | (cd /ceangal-copy && tar -xf -))
   sed -i 's|^snaidhm = .*|snaidhm = { path = "/snaidhm-copy" }|' /ceangal-copy/almide.toml; rm -f /ceangal-copy/almide.lock
-  (cd /ceangal-copy && $ALMIDE build examples/wayland/main.almd -o /tmp/ceangal 2>&1 | tail -1)
+  (cd /ceangal-copy && $ALMIDE build --release examples/wayland/main.almd -o /tmp/ceangal 2>&1 | tail -1)
   chmod 755 /tmp/ceangal
 fi
 # Keys: ALT rather than SUPER, which a browser or VNC viewer keeps for itself.

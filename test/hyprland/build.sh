@@ -10,10 +10,10 @@ sed -i 's|^snaidhm = .*|snaidhm = { path = "/snaidhm-copy" }|' /w/almide.toml
 rm -f /w/almide.lock
 chown -R u /w /snaidhm-copy
 cd /w
-$ALMIDE build main.almd -o /tmp/bar 2>&1 | tail -1
-$ALMIDE build notifyd.almd -o /tmp/notifyd 2>&1 | tail -1
-$ALMIDE build launcher.almd -o /tmp/launcher 2>&1 | tail -1
-$ALMIDE build osd.almd -o /tmp/osd 2>&1 | tail -1
+$ALMIDE build --release main.almd -o /tmp/bar 2>&1 | tail -1
+$ALMIDE build --release notifyd.almd -o /tmp/notifyd 2>&1 | tail -1
+$ALMIDE build --release launcher.almd -o /tmp/launcher 2>&1 | tail -1
+$ALMIDE build --release osd.almd -o /tmp/osd 2>&1 | tail -1
 (cd /snaidhm-copy && $ALMIDE build examples/wayland/main.almd -o /tmp/win 2>&1 | tail -1 && $ALMIDE build examples/wayland/drive.almd -o /tmp/drive 2>&1 | tail -1)
 chmod 755 /tmp/bar /tmp/notifyd /tmp/launcher /tmp/osd /tmp/win /tmp/drive
 # Applications for the launcher to find.
