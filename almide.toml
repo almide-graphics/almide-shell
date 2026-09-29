@@ -1,0 +1,7 @@
+[package]
+name = "almide_shell"
+version = "0.0.1"
+description = "A desktop shell for Hyprland — bar, launcher, notifications — written in Almide"
+
+[dependencies]
+snaidhm = { git = "https://github.com/almide-graphics/snaidhm.git", branch = "feat/layer-shell" }

@@ -1,0 +1,31 @@
+// sys: the battery read from a directory laid out like sysfs's power_supply.
+
+import fs
+import self.sys as sys
+
+effect fn fixture(name: String, bat: String, capacity: String, status: String) -> String = {
+  let base = "${fs.temp_dir()!}/almide-shell-${name}"
+  let _ = fs.remove_all(base)
+  fs.mkdir_p("${base}/AC")!
+  if bat != "" then {
+    fs.mkdir_p("${base}/${bat}")!
+    fs.write("${base}/${bat}/capacity", capacity)!
+    fs.write("${base}/${bat}/status", status)!
+  } else ()
+  ok(base)
+}
+
+test "a discharging battery" {
+  let base = fixture("dis", "BAT0", "57\n", "Discharging\n")!
+  assert_eq(sys.battery_at(base)!, some({ percent: 57, charging: false }))
+}
+
+test "charging and full both count as on power" {
+  assert_eq(sys.battery_at(fixture("chg", "BAT1", "80\n", "Charging\n")!)!, some({ percent: 80, charging: true }))
+  assert_eq(sys.battery_at(fixture("full", "BAT0", "100\n", "Full\n")!)!, some({ percent: 100, charging: true }))
+}
+
+test "no battery" {
+  assert_eq(sys.battery_at(fixture("none", "", "", "")!)!, none)
+  assert_eq(sys.battery_at("/nonexistent/power_supply")!, none)
+}

@@ -1,0 +1,14 @@
+// Print the UTC offset tz.almd gives, per zone file and UTC time, for
+// test/tz_oracle.py to compare with Python's zoneinfo.
+//   almide run test/tz_dump.almd -- ZONEFILE T1 T2 ...
+import env
+import fs
+import self.tz as tz
+
+effect fn main() -> Unit = {
+  let args = env.args()
+  let z = tz.parse(fs.read_bytes_raw(args[0])!)
+  let ts = list.drop(args, 1)
+  let n = list.len(ts)
+  for i in 0..<n { println(int.to_string(tz.offset_at(z, int.parse(ts[i]) ?? 0))) }
+}
