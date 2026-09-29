@@ -36,8 +36,8 @@ if [ $BUILD = ok ]; then
   # "notes-editor", workspace 3 with two, workspace 3 focused, volume 42 %.
   as_u "foot -T notes-editor sleep 600 >/dev/null 2>&1 &"; sleep 1
   as_u hyprctl dispatch workspace 3 >/dev/null
-  as_u "foot -T shell-a sleep 600 >/dev/null 2>&1 &"; sleep 0.5
-  as_u "foot -T shell-b sleep 600 >/dev/null 2>&1 &"; sleep 1
+  as_u "foot -T draft-a sleep 600 >/dev/null 2>&1 &"; sleep 0.5
+  as_u "foot -T draft-b sleep 600 >/dev/null 2>&1 &"; sleep 1
   if [ "$LANG_" = almide ]; then
     as_u "/tmp/bar > /tmp/shell.log 2>&1 & echo \$! > /tmp/shell.pid"
   else
