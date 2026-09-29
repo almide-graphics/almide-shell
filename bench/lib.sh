@@ -23,6 +23,20 @@ bar_png() {
   convert /tmp/screen.png -crop "$((BW * SCALE))x$((BH * SCALE))+$((BX * SCALE))+$((BY * SCALE))" +repage /tmp/bar.png
 }
 
+# Wait until the bar has stopped changing — its first frames may be drawn
+# before the output's scale reached it, or mid-layout — up to 10 s: two
+# captures a second apart that match.
+settle() {
+  local prev=""
+  for i in $(seq 10); do
+    bar_png || { sleep 1; continue; }
+    local sum=$(md5sum < /tmp/bar.png)
+    [ "$sum" = "$prev" ] && return 0
+    prev=$sum
+    sleep 1
+  done
+}
+
 # The bar's text, read with OCR (on a light-on-dark bar: negated, enlarged).
 ocr_prep() { convert /tmp/bar.png -negate -resize 200% /tmp/bar-ocr.png; }
 # Read several ways — negated for light text on the dark bar, as is for dark

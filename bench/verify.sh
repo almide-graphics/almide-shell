@@ -49,6 +49,7 @@ if [ $BUILD = ok ]; then
   SHELL_PID=$(cat /tmp/shell.pid)
   if kill -0 $SHELL_PID 2>/dev/null && bar_geom; then RUNS=ok; fi
   if [ $RUNS = ok ]; then
+    settle
     [ -f $TASK/setup.sh ] && . $TASK/setup.sh
     echo "--- check"
     ( . $TASK/check.sh ) && RESULT_TASK=pass
