@@ -1,1 +1,3 @@
 capture/
+bench/results/*/*/work/
+bench/results/tmp*

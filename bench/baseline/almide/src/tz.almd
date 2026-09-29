@@ -1,0 +1,236 @@
+// almide-shell tz — local time, from the system's time zone files
+//
+// A clock shows local time, and `datetime` speaks UTC. The zone comes from
+// $TZ (a name under /usr/share/zoneinfo, or a path) or /etc/localtime, in the
+// TZif format (RFC 8536): the transitions it lists, and past the last one the
+// POSIX TZ rule in its footer ("JST-9", "CET-1CEST,M3.5.0,M10.5.0/3").
+
+import env
+import fs
+
+/// A time zone: UTC offsets (seconds east) after each transition time, the
+/// offset before the first, and the rule for times after the last.
+type Zone = { at: List[Int], offset: List[Int], before: Int, rule: Rule }
+
+/// A POSIX TZ rule: standard offset, and when daylight saving applies, its
+/// offset and the two changes as Mm.w.d dates with their local times.
+type Rule = { std: Int, dst: Int, has_dst: Bool, start: List[Int], end: List[Int] }
+
+fn utc() -> Zone = {
+  let empty: List[Int] = []
+  { at: empty, offset: empty, before: 0, rule: { std: 0, dst: 0, has_dst: false, start: empty, end: empty } }
+}
+
+/// The zone this system uses (UTC when it cannot be read).
+effect fn system() -> Zone = {
+  let name = env.get("TZ") ?? ""
+  let path = if name == "" then "/etc/localtime"
+    else if string.starts_with(name, "/") then name
+    else "/usr/share/zoneinfo/${if string.starts_with(name, ":") then string.slice(name, 1) else name}"
+  match fs.read_bytes_raw(path) {
+    ok(data) => parse(data),
+    err(_) => if name != "" and not string.contains(name, "/") then from_rule(name) else utc(),
+  }
+}
+
+fn from_rule(text: String) -> Zone = {
+  let empty: List[Int] = []
+  let r = rule(text)
+  { at: empty, offset: empty, before: r.std, rule: r }
+}
+
+/// Parse TZif data (versions 1-4; the 64-bit block when there is one).
+fn parse(b: Bytes) -> Zone = {
+  if bytes.len(b) < 44 or bytes.to_string_lossy(bytes.slice(b, 0, 4)) != "TZif" then utc()
+  else {
+    let version = bytes.read_u8(b, 4)
+    let v1 = block_len(b, 0, 4)
+    if version >= 0x32 then read_block(b, 44 + v1, 8) else read_block(b, 0, 4)
+  }
+}
+
+/// Length of the data block after the header at `h`, with `w`-byte times.
+fn block_len(b: Bytes, h: Int, w: Int) -> Int = {
+  let isut = bytes.read_u32_be(b, h + 20)
+  let isstd = bytes.read_u32_be(b, h + 24)
+  let leap = bytes.read_u32_be(b, h + 28)
+  let times = bytes.read_u32_be(b, h + 32)
+  let types = bytes.read_u32_be(b, h + 36)
+  let chars = bytes.read_u32_be(b, h + 40)
+  times * w + times + types * 6 + chars + leap * (w + 4) + isstd + isut
+}
+
+fn read_block(b: Bytes, h: Int, w: Int) -> Zone = {
+  let times = bytes.read_u32_be(b, h + 32)
+  let types = bytes.read_u32_be(b, h + 36)
+  let data = h + 44
+  let idx = data + times * w
+  let info = idx + times
+  var at: List[Int] = []
+  var offset: List[Int] = []
+  for i in 0..<times {
+    let t = if w == 8 then bytes.read_i64_be(b, data + i * 8) else bytes.read_i32_be(b, data + i * 4)
+    let k = bytes.read_u8(b, idx + i)
+    list.push(at, t)
+    list.push(offset, bytes.read_i32_be(b, info + k * 6))
+  }
+  // Before the first transition: the first standard-time type (else type 0).
+  var before = if types > 0 then bytes.read_i32_be(b, info) else 0
+  var found = false
+  for k in 0..<types {
+    if not found and bytes.read_u8(b, info + k * 6 + 4) == 0 then {
+      before = bytes.read_i32_be(b, info + k * 6)
+      found = true
+    } else ()
+  }
+  // The footer, after the block: "\n<rule>\n" (version 2 on).
+  let end = h + 44 + block_len(b, h, w)
+  let footer = if w == 8 and end < bytes.len(b) then string.trim(bytes.to_string_lossy(bytes.slice(b, end, bytes.len(b)))) else ""
+  let fallback = if list.len(offset) > 0 then offset[list.len(offset) - 1] else before
+  let r = if footer == "" then { ...rule(""), std: fallback } else rule(footer)
+  { at: at, offset: offset, before: before, rule: r }
+}
+
+// ── POSIX TZ rules ──
+
+/// Skip a zone abbreviation ("JST", "<+09>") from `i`; the index after it.
+fn skip_name(cs: List[String], i: Int) -> Int = {
+  let n = list.len(cs)
+  if i < n and cs[i] == "<" then {
+    var j = i
+    while j < n and cs[j] != ">" { j = j + 1 }
+    j + 1
+  } else {
+    var j = i
+    while j < n and string.to_upper(cs[j]) != string.to_lower(cs[j]) { j = j + 1 }
+    j
+  }
+}
+
+fn digit(c: String) -> Int = match c {
+  "0" => 0, "1" => 1, "2" => 2, "3" => 3, "4" => 4,
+  "5" => 5, "6" => 6, "7" => 7, "8" => 8, "9" => 9,
+  _ => 0 - 1,
+}
+
+/// A number from `i`; (value, next index).
+fn number(cs: List[String], i: Int) -> (Int, Int) = {
+  var v = 0
+  var j = i
+  while j < list.len(cs) and digit(cs[j]) >= 0 {
+    v = v * 10 + digit(cs[j])
+    j = j + 1
+  }
+  (v, j)
+}
+
+/// `[+-]hh[:mm[:ss]]` from `i` in seconds; (value, next index).
+fn hms(cs: List[String], i: Int) -> (Int, Int) = {
+  let n = list.len(cs)
+  let neg = i < n and cs[i] == "-"
+  let s = if i < n and (cs[i] == "-" or cs[i] == "+") then i + 1 else i
+  let h = number(cs, s)
+  var total = h.0 * 3600
+  var j = h.1
+  if j < n and cs[j] == ":" then {
+    let m = number(cs, j + 1)
+    total = total + m.0 * 60
+    j = m.1
+    if j < n and cs[j] == ":" then {
+      let sec = number(cs, j + 1)
+      total = total + sec.0
+      j = sec.1
+    } else ()
+  } else ()
+  (if neg then 0 - total else total, j)
+}
+
+/// `Mm.w.d[/time]` from `i`: [month, week, weekday, seconds]; next index.
+fn date_rule(cs: List[String], i: Int) -> (List[Int], Int) = {
+  let n = list.len(cs)
+  if i < n and cs[i] == "M" then {
+    let m = number(cs, i + 1)
+    let w = number(cs, m.1 + 1)
+    let d = number(cs, w.1 + 1)
+    if d.1 < n and cs[d.1] == "/" then {
+      let t = hms(cs, d.1 + 1)
+      ([m.0, w.0, d.0, t.0], t.1)
+    } else ([m.0, w.0, d.0, 7200], d.1)
+  } else {
+    let empty: List[Int] = []
+    (empty, n)
+  }
+}
+
+fn rule(text: String) -> Rule = {
+  let empty: List[Int] = []
+  let cs = string.chars(text)
+  let n = list.len(cs)
+  let after_std = skip_name(cs, 0)
+  // POSIX offsets are hours WEST of UTC: "JST-9" is UTC+9.
+  let std = hms(cs, after_std)
+  let std_off = 0 - std.0
+  if std.1 >= n then { std: std_off, dst: std_off, has_dst: false, start: empty, end: empty }
+  else {
+    let after_dst = skip_name(cs, std.1)
+    let has_own = after_dst < n and cs[after_dst] != ","
+    let dst = if has_own then hms(cs, after_dst) else (std.0 - 3600, after_dst)
+    let at = dst.1
+    if at < n and cs[at] == "," then {
+      let s = date_rule(cs, at + 1)
+      let e = if s.1 < n and cs[s.1] == "," then date_rule(cs, s.1 + 1) else (empty, n)
+      { std: std_off, dst: 0 - dst.0, has_dst: list.len(s.0) == 4 and list.len(e.0) == 4, start: s.0, end: e.0 }
+    } else { std: std_off, dst: std_off, has_dst: false, start: empty, end: empty }
+  }
+}
+
+/// Days from 1970-01-01 to year `y`, month `m`, day `d` (proleptic Gregorian).
+fn days(y: Int, m: Int, d: Int) -> Int = {
+  let yy = if m <= 2 then y - 1 else y
+  let era = (if yy >= 0 then yy else yy - 399) / 400
+  let yoe = yy - era * 400
+  let mp = (m + 9) % 12
+  let doy = (153 * mp + 2) / 5 + d - 1
+  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+  era * 146097 + doe - 719468
+}
+
+fn month_days(y: Int, m: Int) -> Int = days(if m == 12 then y + 1 else y, if m == 12 then 1 else m + 1, 1) - days(y, m, 1)
+
+/// UTC seconds of the moment rule date `r` happens in year `y`, given the
+/// offset in force just before it.
+fn change(y: Int, r: List[Int], offset: Int) -> Int = {
+  let first = days(y, r[0], 1)
+  // 1970-01-01 was a Thursday (4); d is 0 = Sunday.
+  let first_wd = ((first % 7) + 7 + 4) % 7
+  var day = 1 + ((r[2] - first_wd) + 7) % 7 + (r[1] - 1) * 7
+  let last = month_days(y, r[0])
+  while day > last { day = day - 7 }
+  days(y, r[0], day) * 86400 + r[3] - offset
+}
+
+/// The offset from UTC, in seconds, at UTC time `t`.
+fn offset_at(z: Zone, t: Int) -> Int = {
+  let n = list.len(z.at)
+  if n > 0 and t < z.at[0] then z.before
+  else if n > 0 and t < z.at[n - 1] then {
+    var lo = 0
+    var hi = n - 1
+    while lo < hi {
+      let mid = (lo + hi + 1) / 2
+      if z.at[mid] <= t then { lo = mid } else { hi = mid - 1 }
+    }
+    z.offset[lo]
+  } else if not z.rule.has_dst then z.rule.std
+  else {
+    let y = datetime.year(t + z.rule.std)
+    let on = change(y, z.rule.start, z.rule.std)
+    let off = change(y, z.rule.end, z.rule.dst)
+    let in_dst = if on < off then t >= on and t < off else t >= on or t < off
+    if in_dst then z.rule.dst else z.rule.std
+  }
+}
+
+/// UTC time `t` as local time in zone `z`, in datetime's (UTC) representation:
+/// datetime.hour / format on the result read local fields.
+fn localize(z: Zone, t: Int) -> Int = t + offset_at(z, t)

@@ -1,0 +1,157 @@
+// almide-shell bar — the modules of config.almd, laid out and drawn
+//
+// Each module becomes pieces of text (a workspace button is one piece); the
+// left group runs from the left edge, the right group ends at the right edge,
+// the centre group is centred. A piece may carry an action — the Hyprland
+// dispatcher a click on it runs.
+
+import snaidhm.cpu.canvas as canvas
+import snaidhm.sfnt as sfnt
+import self.config as config
+import self.hypr as hypr
+import self.sys as sys
+
+type State = {
+  workspaces: List[hypr.Workspace],
+  active: Int,
+  power: sys.Power?,
+  sound: sys.Sound?,
+  // Local time, in datetime's representation (see tz.localize).
+  now: Int,
+  // The last output of each Command module, by its command.
+  outputs: Map[String, String],
+}
+
+/// A piece of the bar: its text, colour, whether it sits on a highlight, and
+/// the dispatcher a click runs ("" for none).
+type Piece = { text: String, color: String, boxed: Bool, action: String }
+
+/// A piece placed at `x`, `w` wide.
+type Placed = { piece: Piece, x: Float, w: Float }
+
+fn piece(text: String, color: String) -> Piece = { text: text, color: color, boxed: false, action: "" }
+
+fn hex(s: String, at: Int) -> Float = int.to_float(int.from_hex(string.slice(s, at, at + 2)) ?? 0) / 255.0
+
+/// "#rrggbb[aa]" as (r, g, b, a).
+fn rgba(s: String) -> (Float, Float, Float, Float) =
+  (hex(s, 1), hex(s, 3), hex(s, 5), if string.len(s) >= 9 then hex(s, 7) else 1.0)
+
+let DAYS = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"]
+let MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+/// `pattern` filled in for local time `t`.
+fn clock(t: Int, pattern: String) -> String = {
+  let day = ((t / 86400) % 7 + 7) % 7
+  let p = string.replace(string.replace(pattern, "%a", DAYS[day]), "%b", MONTHS[datetime.month(t) - 1])
+  datetime.format(t, p)
+}
+
+fn pieces(m: config.Module, st: State) -> List[Piece] = {
+  let th = config.THEME
+  match m {
+    config.Workspaces => st.workspaces |> list.map((w) => {
+      text: if w.name == "" then int.to_string(w.id) else w.name,
+      color: if w.id == st.active then th.background else th.foreground,
+      boxed: w.id == st.active,
+      action: "workspace ${int.to_string(w.id)}",
+    }),
+    config.Clock(pattern) => [piece(clock(st.now, pattern), th.foreground)],
+    config.Battery => match st.power {
+      some(p) => [piece("${if p.charging then "+" else ""}${int.to_string(p.percent)}%", if p.percent <= 15 and not p.charging then th.accent else th.foreground)],
+      none => [],
+    },
+    config.Volume => match st.sound {
+      some(s) => [{ ...piece(if s.muted then "vol muted" else "vol ${int.to_string(s.percent)}%", if s.muted then th.dim else th.foreground), action: "exec wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle" }],
+      none => [],
+    },
+    config.Text(t) => [piece(t, th.foreground)],
+    config.Command(cmd, _) => [piece(map.get(st.outputs, cmd) ?? "", th.foreground)],
+  }
+}
+
+fn group(ms: List[config.Module], st: State) -> List[Piece] = ms |> list.flat_map((m) => pieces(m, st))
+
+/// Pixel width of a piece's box (text plus its padding when boxed).
+fn width_of(faces: List[sfnt.Font], p: Piece) -> Float = {
+  let inner = canvas.measure(faces, text_codes(p.text), config.THEME.font_size)
+  if p.boxed or p.action != "" then inner + 16.0 else inner
+}
+
+fn text_codes(s: String) -> List[Int] = {
+  let cs = string.chars(s)
+  let n = list.len(cs)
+  var out: List[Int] = []
+  for i in 0..<n { list.push(out, string.codepoint(cs[i]) ?? 0) }
+  out
+}
+
+/// Place `ps` left to right from `x`, `gap` apart.
+fn place(faces: List[sfnt.Font], ps: List[Piece], x: Float, gap: Float) -> List[Placed] = {
+  var at = x
+  var out: List[Placed] = []
+  let n = list.len(ps)
+  for i in 0..<n {
+    let w = width_of(faces, ps[i])
+    list.push(out, { piece: ps[i], x: at, w: w })
+    at = at + w + (if ps[i].action != "" then 4.0 else gap)
+  }
+  out
+}
+
+fn span(placed: List[Placed]) -> Float = {
+  let n = list.len(placed)
+  if n == 0 then 0.0 else placed[n - 1].x + placed[n - 1].w - placed[0].x
+}
+
+/// Every piece of the bar, placed for a bar `w` units wide.
+fn layout(faces: List[sfnt.Font], st: State, w: Float) -> List[Placed] = {
+  let th = config.THEME
+  let left = place(faces, group(config.LEFT, st), th.padding, th.gap)
+  let center0 = place(faces, group(config.CENTER, st), 0.0, th.gap)
+  let center = place(faces, group(config.CENTER, st), (w - span(center0)) / 2.0, th.gap)
+  let right0 = place(faces, group(config.RIGHT, st), 0.0, th.gap)
+  let right = place(faces, group(config.RIGHT, st), w - th.padding - span(right0), th.gap)
+  left + center + right
+}
+
+/// The bar drawn on `frame` (the window's pixels, drawn on in units).
+fn render(faces: List[sfnt.Font], st: State, frame: canvas.Canvas) -> Bytes = {
+  let th = config.THEME
+  let bg = rgba(th.background)
+  let width = canvas.width(frame)
+  let height = canvas.height(frame)
+  var c = frame
+  c = canvas.clear(c, bg.0, bg.1, bg.2)
+  let f = faces[0]
+  let em = th.font_size / int.to_float(f.units_per_em)
+  let ascent = int.to_float(f.ascent) * em
+  let descent = 0.0 - int.to_float(f.descent) * em
+  let baseline = height / 2.0 + (ascent - descent) / 2.0
+  let placed = layout(faces, st, width)
+  let n = list.len(placed)
+  for i in 0..<n {
+    let p = placed[i]
+    let tx = if p.piece.boxed or p.piece.action != "" then p.x + 8.0 else p.x
+    if p.piece.boxed then {
+      let a = rgba(th.accent)
+      c = canvas.rect(c, p.x, 4.0, p.x + p.w, height - 4.0, 6.0, a.0, a.1, a.2, a.3)
+    } else ()
+    let col = rgba(p.piece.color)
+    c = canvas.draw_text(c, faces, text_codes(p.piece.text), th.font_size, tx, baseline, col.0, col.1, col.2, col.3)
+  }
+  c.px
+}
+
+/// The action of the piece at `x` on a bar `width` units wide, or "".
+fn hit(faces: List[sfnt.Font], st: State, width: Float, x: Float) -> String =
+  match layout(faces, st, width) |> list.find((p) => p.piece.action != "" and x >= p.x and x < p.x + p.w) {
+    some(p) => p.piece.action,
+    none => "",
+  }
+
+/// What the bar shows, as one string: redraw only when it changes.
+fn render_key(st: State) -> String = {
+  let all = config.LEFT + config.CENTER + config.RIGHT
+  all |> list.flat_map((m) => pieces(m, st)) |> list.map((p) => "${p.text}|${p.color}|${if p.boxed then "1" else "0"}") |> list.join("\t")
+}

@@ -1,0 +1,102 @@
+// almide-shell hypr — Hyprland's IPC, over its two Unix sockets
+//
+// $XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/ holds:
+//   .socket.sock   one request per connection ("j/workspaces", "dispatch
+//                  workspace 2"); the reply is everything read until close
+//   .socket2.sock  the event stream: one "name>>data" line per event
+// ("workspace>>2", "createworkspace>>3", "activewindow>>kitty,~").
+
+import env
+import json
+import net
+
+type Workspace = { id: Int, name: String, windows: Int, monitor: String }
+
+/// An event: its name and its data.
+type Event = { name: String, data: String }
+
+// The event stream's bytes after its last complete line.
+var partial = ""
+
+/// The directory of the running Hyprland's sockets.
+effect fn dir() -> Result[String, String] = {
+  match env.get("HYPRLAND_INSTANCE_SIGNATURE") {
+    none => err("HYPRLAND_INSTANCE_SIGNATURE is not set; not running under Hyprland"),
+    some(sig) => {
+      let base = env.get("XDG_RUNTIME_DIR") ?? "/tmp"
+      ok("${base}/hypr/${sig}")
+    },
+  }
+}
+
+/// Send `command` and return the whole reply.
+effect fn request(command: String) -> Result[String, String] = {
+  let fd = net.unix_connect("${dir()!}/.socket.sock")!
+  net.unix_send(fd, bytes.from_string(command), [])!
+  var reply = bytes.new(0)
+  var more = true
+  while more {
+    let got = net.unix_recv(fd, 65536)!
+    if bytes.len(got) == 0 then { more = false } else { reply = bytes.concat(reply, got) }
+  }
+  net.unix_close(fd)!
+  ok(bytes.to_string_lossy(reply))
+}
+
+fn int_field(v: Value, key: String) -> Int = match value.field(v, key) {
+  ok(f) => value.as_int(f) ?? 0,
+  err(_) => 0,
+}
+
+fn string_field(v: Value, key: String) -> String = match value.field(v, key) {
+  ok(f) => value.as_string(f) ?? "",
+  err(_) => "",
+}
+
+/// Every workspace, by id.
+effect fn workspaces() -> Result[List[Workspace], String] = {
+  let items = value.as_array(json.parse(request("j/workspaces")!)!)!
+  let list_ws = items |> list.map((w) => {
+    { id: int_field(w, "id"), name: string_field(w, "name"), windows: int_field(w, "windows"),
+      monitor: string_field(w, "monitor") }
+  })
+  ok(list.sort_by(list_ws, (w) => w.id))
+}
+
+/// The id of the focused workspace.
+effect fn active_workspace() -> Result[Int, String] =
+  ok(int_field(json.parse(request("j/activeworkspace")!)!, "id"))
+
+/// Run a dispatcher ("workspace 2", "exec kitty"); err unless Hyprland says ok.
+effect fn dispatch(args: String) -> Result[Unit, String] = {
+  let reply = request("dispatch ${args}")!
+  if string.trim(reply) == "ok" then ok(()) else err("dispatch ${args}: ${reply}")
+}
+
+/// Connect to the event stream; its descriptor, to wait on and `read_events`.
+effect fn events() -> Result[Int, String] = net.unix_connect("${dir()!}/.socket2.sock")
+
+/// The events that arrived on `fd` (call when it is readable).
+effect fn read_events(fd: Int) -> Result[List[Event], String] = {
+  let got = net.unix_recv(fd, 65536)!
+  if bytes.len(got) == 0 then err("Hyprland closed its event socket")
+  else {
+    let text = partial + bytes.to_string_lossy(got)
+    let lines = string.split(text, "\n")
+    let n = list.len(lines)
+    // The last piece is a line still arriving (empty after a full one).
+    partial = lines[n - 1]
+    let whole = list.take(lines, n - 1)
+    ok(whole |> list.filter_map((l) => match string.index_of(l, ">>") {
+      some(at) => some({ name: string.slice(l, 0, at), data: string.slice(l, at + 2) }),
+      none => none,
+    }))
+  }
+}
+
+/// The focused window's title ("" when none).
+effect fn active_title() -> Result[String, String] =
+  match json.parse(request("j/activewindow")!) {
+    ok(v) => ok(string_field(v, "title")),
+    err(_) => ok(""),
+  }

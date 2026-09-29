@@ -9,7 +9,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     ca-certificates curl git build-essential pkg-config fonts-noto-cjk fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    quickshell qt6-wayland qml6-module-qtquick-layouts qml6-module-qtquick-window upower tesseract-ocr imagemagick wayvnc novnc websockify foot \
+    quickshell qt6-wayland qml6-module-qtquick-layouts qml6-module-qtquick-window upower tesseract-ocr imagemagick wayvnc novnc websockify foot jq \
     && rm -rf /var/lib/apt/lists/*
 RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.94.0
 ENV PATH=/root/.cargo/bin:$PATH

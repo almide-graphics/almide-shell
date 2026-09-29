@@ -1,0 +1,107 @@
+// almide-shell — the bar, on Hyprland (or any compositor with wlr-layer-shell)
+//
+//   almide run main.almd
+//
+// One layer surface across the top of the output, drawn on the CPU, updated
+// only when something it shows changes: Hyprland's event socket, the clock's
+// next tick, and the periodic reads (battery, volume, Command modules) are
+// all waited on in one poll, so an idle bar sleeps.
+
+import net
+import snaidhm.wayland.window as window
+import snaidhm.native.fonts as fonts
+import snaidhm.cpu.canvas as canvas
+import self.bar as bar
+import self.config as config
+import self.hypr as hypr
+import self.sys as sys
+import self.tz as tz
+
+/// Seconds between reads of state that has no event source yet.
+let BATTERY_EVERY = 30
+let VOLUME_EVERY = 5
+
+fn uses_seconds() -> Bool =
+  (config.LEFT + config.CENTER + config.RIGHT) |> list.any((m) => match m {
+    config.Clock(p) => string.contains(p, "%S"),
+    _ => false,
+  })
+
+fn commands() -> List[(String, Int)] =
+  (config.LEFT + config.CENTER + config.RIGHT) |> list.filter_map((m) => match m {
+    config.Command(cmd, secs) => some((cmd, int.max(1, secs))),
+    _ => none,
+  })
+
+effect fn refresh_workspaces(st: bar.State) -> Result[bar.State, String] =
+  match hypr.workspaces() {
+    ok(ws) => ok({ ...st, workspaces: ws, active: hypr.active_workspace() ?? st.active }),
+    err(_) => ok(st),
+  }
+
+/// A frame for the bar: the window's pixels, drawn on in units.
+fn frame() -> canvas.Canvas = canvas.scaled(window.width(), window.height(), window.scale())
+
+effect fn main() -> Unit = {
+  let th = config.THEME
+  let anchors = int.bor(int.bor(window.ANCHOR_TOP, window.ANCHOR_LEFT), window.ANCHOR_RIGHT)
+  if window.open_layer("almide-bar", window.LAYER_TOP, anchors, 0, th.height, th.height, 0, 0)! then {
+    let faces = fonts.system()!
+    let zone = tz.system()!
+    let events = hypr.events() ?? (0 - 1)
+    let empty_ws: List[hypr.Workspace] = []
+    let no_outputs: Map[String, String] = map.new()
+    let cmds = commands()
+    var st: bar.State = {
+      workspaces: empty_ws, active: 0, power: sys.battery()!, sound: sys.volume()!,
+      now: tz.localize(zone, datetime.now()), outputs: no_outputs, title: hypr.active_title() ?? "",
+    }
+    st = refresh_workspaces(st)!
+    for c in cmds { st = { ...st, outputs: map.set(st.outputs, c.0, sys.command(c.0)!) } }
+    window.present(bar.render(faces, st, frame()))!
+    let tick = if uses_seconds() then 1 else 60
+    var going = true
+    while going {
+      let t = datetime.now()
+      // Sleep until the next thing due: the clock's tick, a periodic read.
+      var due = tick - (tz.localize(zone, t) % tick)
+      due = int.min(due, VOLUME_EVERY - t % VOLUME_EVERY)
+      due = int.min(due, BATTERY_EVERY - t % BATTERY_EVERY)
+      for c in cmds { due = int.min(due, c.1 - t % c.1) }
+      let fds = if events >= 0 then [window.fd(), events] else [window.fd()]
+      let ready = net.unix_wait(fds, due * 1000)!
+      going = window.pump(0)!
+      var next = st
+      if events >= 0 and list.contains(ready, events) then {
+        let evs = hypr.read_events(events)!
+        if evs |> list.any((e) => string.contains(e.name, "workspace") or e.name == "focusedmon" or e.name == "openwindow" or e.name == "closewindow") then {
+          next = refresh_workspaces(next)!
+        } else ()
+        if evs |> list.any((e) => e.name == "activewindow" or e.name == "closewindow" or e.name == "workspace") then {
+          next = { ...next, title: hypr.active_title() ?? "" }
+        } else ()
+      } else ()
+      // Clicks: a workspace button switches to it.
+      var kind = window.next_event()
+      while kind != window.NONE {
+        if kind == window.MOUSE_DOWN and window.event_code() == 0 then {
+          let action = bar.hit(faces, next, window.extent().0, window.event_x())
+          if action != "" then { let _ = hypr.dispatch(action) } else ()
+        } else ()
+        kind = window.next_event()
+      }
+      let t2 = datetime.now()
+      next = { ...next, now: tz.localize(zone, t2) }
+      if t2 % VOLUME_EVERY == 0 then { next = { ...next, sound: sys.volume()! } } else ()
+      if t2 % BATTERY_EVERY == 0 then { next = { ...next, power: sys.battery()! } } else ()
+      for c in cmds {
+        if t2 % c.1 == 0 then { next = { ...next, outputs: map.set(next.outputs, c.0, sys.command(c.0)!) } } else ()
+      }
+      let redraw = window.resized() or bar.render_key(next) != bar.render_key(st)
+      st = next
+      if redraw and going then { window.present(bar.render(faces, st, frame()))! } else ()
+    }
+  } else {
+    println("no layer-shell surface: needs a Wayland compositor with wlr-layer-shell (Hyprland, sway)")
+  }
+}

@@ -1,0 +1,52 @@
+// almide-shell sys — the machine's state the bar shows
+
+import fs
+import process
+
+/// Battery charge in percent and whether it is charging; none without one.
+type Power = { percent: Int, charging: Bool }
+
+effect fn battery() -> Power? = battery_at("/sys/class/power_supply")!
+
+/// `battery()` from a power_supply directory laid out as sysfs's.
+effect fn battery_at(base: String) -> Power? = {
+  let names = match fs.list_dir(base) { ok(ns) => ns, err(_) => [] }
+  match names |> list.find((n) => string.starts_with(n, "BAT")) {
+    none => none,
+    some(bat) => {
+      let percent = match fs.read_text("${base}/${bat}/capacity") {
+        ok(t) => int.parse(string.trim(t)) ?? 0,
+        err(_) => 0,
+      }
+      let status = match fs.read_text("${base}/${bat}/status") { ok(t) => string.trim(t), err(_) => "" }
+      some({ percent: percent, charging: status == "Charging" or status == "Full" })
+    },
+  }
+}
+
+/// The default output's volume in percent and whether it is muted; none
+/// without PipeWire's wpctl.
+type Sound = { percent: Int, muted: Bool }
+
+effect fn volume() -> Sound? = {
+  match process.exec("wpctl", ["get-volume", "@DEFAULT_AUDIO_SINK@"]) {
+    err(_) => none,
+    ok(out) => {
+      // "Volume: 0.45" or "Volume: 0.45 [MUTED]"
+      let parts = string.split(string.trim(out), " ")
+      if list.len(parts) < 2 then none
+      else {
+        let v = float.parse(parts[1]) ?? 0.0
+        some({ percent: float.to_int(float.round(v * 100.0)), muted: string.contains(out, "MUTED") })
+      }
+    },
+  }
+}
+
+/// The first line `cmd` prints (run by sh), or "" when it fails.
+effect fn command(cmd: String) -> String = {
+  match process.exec("sh", ["-c", cmd]) {
+    ok(out) => match string.lines(out) |> list.first { some(l) => string.trim(l), none => "" },
+    err(_) => "",
+  }
+}

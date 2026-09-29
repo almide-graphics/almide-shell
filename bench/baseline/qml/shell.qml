@@ -1,8 +1,7 @@
-// The same bar as almide-shell's, in Quickshell (QML) — the baseline the
-// modification benchmark compares against. Workspaces from Hyprland (a click
+// My bar for Hyprland, in Quickshell: workspaces from Hyprland (a click
 // switches), a clock, the default output's volume and the battery.
 //
-//   quickshell -p baseline/quickshell/shell.qml
+//   quickshell -p shell.qml
 
 import Quickshell
 import Quickshell.Hyprland
@@ -14,7 +13,7 @@ import QtQuick.Layouts
 ShellRoot {
   id: root
 
-  // Theme: the values almide-shell's config.almd uses.
+  // Theme: colours and sizes.
   readonly property int barHeight: 30
   readonly property int fontSize: 14
   readonly property color background: "#1a1b26"

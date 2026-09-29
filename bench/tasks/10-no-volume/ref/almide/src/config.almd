@@ -1,0 +1,50 @@
+// almide-shell config — what the bar shows, and how it looks
+//
+// This is the file to change (by hand, or by asking an AI): the modules on
+// the left, in the centre and on the right, and the theme. Everything else
+// reads from here.
+//
+// Modules:
+//   Workspaces            Hyprland's workspaces; click one to switch to it
+//   Clock(pattern)        local time: %H %M %S %Y %m %d, %a (Mon), %b (Jan)
+//   Battery               charge, when the machine has a battery
+//   Volume                the default output's volume (PipeWire, via wpctl)
+//   Text(text)            fixed text
+//   Command(cmd, secs)    the first line a shell command prints, every secs
+
+type Module =
+  | Workspaces
+  | Clock(String)
+  | Battery
+  | Volume
+  | Text(String)
+  | Command(String, Int)
+
+/// Colours are "#rrggbb" or "#rrggbbaa"; sizes are logical pixels.
+type Theme = {
+  height: Int,
+  font_size: Float,
+  background: String,
+  foreground: String,
+  dim: String,
+  accent: String,
+  padding: Float,
+  gap: Float,
+}
+
+let THEME: Theme = {
+  height: 30,
+  font_size: 14.0,
+  background: "#1a1b26",
+  foreground: "#c0caf5",
+  dim: "#565f89",
+  accent: "#7aa2f7",
+  padding: 12.0,
+  gap: 16.0,
+}
+
+let LEFT: List[Module] = [Workspaces]
+
+let CENTER: List[Module] = [Clock("%a %b %d  %H:%M")]
+
+let RIGHT: List[Module] = [Battery]
