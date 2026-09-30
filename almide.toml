@@ -5,3 +5,4 @@ description = "A desktop shell for Hyprland — bar, launcher, notifications —
 
 [dependencies]
 snaidhm = { git = "https://github.com/almide-graphics/snaidhm.git", branch = "feat/typed-layer-options" }
+ceangal = { git = "https://github.com/almide-graphics/ceangal.git", branch = "feat/cpu-host" }

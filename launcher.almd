@@ -3,14 +3,18 @@
 //   almide run launcher.almd        (bind it to a key: bind = SUPER, SPACE, exec, launcher)
 //
 // A layer surface over everything, centred, holding the keyboard: typing
-// filters the installed applications (apps.almd), Up/Down move the
-// selection, Enter starts it through Hyprland, Escape closes.
+// (an input method composes too) filters the installed applications
+// (apps.almd), Up/Down or the pointer move the selection, Enter or a click
+// starts it through Hyprland, Escape closes. What it shows is a ceangal view
+// (`view`), laid out by ceangal and drawn on the CPU.
 
 import process
+import ceangal.cpu_draw as draw
+import ceangal.render as render
+import ceangal.view as v
 import snaidhm.wayland.window as window
 import snaidhm.native.fonts as fonts
 import snaidhm.cpu.canvas as canvas
-import snaidhm.sfnt as sfnt
 import self.apps as apps
 import self.bar as bar
 import self.config as config
@@ -25,46 +29,50 @@ let EDGE = 16
 
 fn height_for(rows: Int) -> Int = HEAD_H + 12 + rows * ROW_H
 
+/// A theme colour (#rrggbb[aa]) as ceangal's.
+fn colour(hex: String) -> v.Color = {
+  let c = bar.rgba(hex)
+  v.rgba(c.0, c.1, c.2, c.3)
+}
+
+/// The launcher: the search field over the matching applications, the
+/// selected one highlighted. A click on a row means its index + 1.
+fn view(shown: List[apps.App], sel: Int, rows: Int) -> v.View = {
+  let th = config.THEME
+  let listed = shown |> list.take(rows) |> list.enumerate |> list.map(((i, a)) => app_row(a, i, i == sel))
+  let body = if list.len(shown) == 0 then [v.text("No matches") |> v.font(th.font_size) |> v.color(colour(th.dim)) |> v.px(14.0) |> v.py(12.0)]
+             else listed
+  v.col([
+    v.text_field("Search applications") |> v.font(th.font_size + 3.0) |> v.color(colour(th.foreground)) |> v.h(int.to_float(HEAD_H - 8)),
+    v.col([]) |> v.h(1.0) |> v.mx(8.0) |> v.bg(colour(th.dim)) |> v.opacity(0.6),
+    v.col(body) |> v.py(5.0),
+  ])
+  |> v.px(8.0)
+  |> v.bg(colour(th.background))
+  |> v.rounded(14.0)
+}
+
+/// One application: its name, then what it is, dimmed.
+fn app_row(a: apps.App, i: Int, selected: Bool) -> v.View = {
+  let th = config.THEME
+  let ink = if selected then colour(th.background) else colour(th.foreground)
+  let faint = if selected then colour(th.background) else colour(th.dim)
+  v.row([
+    v.text(a.name) |> v.font(th.font_size + 1.0) |> v.color(ink),
+    v.text(a.comment) |> v.font(th.font_size - 1.0) |> v.color(faint) |> v.opacity(0.9),
+  ])
+  |> v.gap(12.0)
+  |> v.align(v.ALIGN_CENTER)
+  |> v.px(14.0)
+  |> v.h(int.to_float(ROW_H - 4))
+  |> v.my(2.0)
+  |> v.rounded(8.0)
+  |> v.bg(if selected then colour(th.accent) else v.transparent)
+  |> v.on_click(i + 1)
+}
+
 /// A frame for the launcher: the window's pixels, drawn on in units.
 fn frame() -> canvas.Canvas = canvas.scaled(window.width(), window.height(), window.scale())
-
-fn render(faces: List[sfnt.Font], query: String, shown: List[apps.App], sel: Int, rows: Int, frame: canvas.Canvas) -> Bytes = {
-  let th = config.THEME
-  let bg = bar.rgba(th.background)
-  let fg = bar.rgba(th.foreground)
-  let dim = bar.rgba(th.dim)
-  let accent = bar.rgba(th.accent)
-  var c = frame
-  let w = canvas.width(c)
-  c = canvas.rect(c, 0.0, 0.0, w, canvas.height(c), 14.0, bg.0, bg.1, bg.2, 0.97)
-  let size = th.font_size + 3.0
-  let text = if query == "" then "Search applications" else query
-  let col = if query == "" then dim else fg
-  c = canvas.draw_text(c, faces, bar.text_codes(text), size, 20.0, 36.0, col.0, col.1, col.2, 1.0)
-  // The caret after what was typed.
-  let cx = 20.0 + (if query == "" then 0.0 else canvas.measure(faces, bar.text_codes(query), size)) + 1.0
-  c = canvas.rect(c, cx, 18.0, cx + 2.0, 42.0, 0.0, accent.0, accent.1, accent.2, 1.0)
-  c = canvas.rect(c, 16.0, int.to_float(HEAD_H) - 1.0, w - 16.0, int.to_float(HEAD_H), 0.0, dim.0, dim.1, dim.2, 0.6)
-  let n = int.min(rows, list.len(shown))
-  for i in 0..<n {
-    let top = int.to_float(HEAD_H + 6 + i * ROW_H)
-    if i == sel then {
-      c = canvas.rect(c, 8.0, top, w - 8.0, top + int.to_float(ROW_H) - 4.0, 8.0, accent.0, accent.1, accent.2, 1.0)
-    } else ()
-    let ink = if i == sel then bg else fg
-    let a = shown[i]
-    c = canvas.draw_text(c, faces, bar.text_codes(a.name), th.font_size + 1.0, 22.0, top + 25.0, ink.0, ink.1, ink.2, 1.0)
-    if a.comment != "" then {
-      let x = 34.0 + canvas.measure(faces, bar.text_codes(a.name), th.font_size + 1.0)
-      let faint = if i == sel then bg else dim
-      c = canvas.draw_text(c, faces, bar.text_codes(a.comment), th.font_size - 1.0, x, top + 25.0, faint.0, faint.1, faint.2, 0.9)
-    } else ()
-  }
-  if list.len(shown) == 0 then {
-    c = canvas.draw_text(c, faces, bar.text_codes("No matches"), th.font_size, 22.0, int.to_float(HEAD_H + 32), dim.0, dim.1, dim.2, 1.0)
-  } else ()
-  c.px
-}
 
 /// Start `app`: through Hyprland when it runs us, else directly.
 effect fn launch(app: apps.App) -> Result[Unit, String] = {
@@ -89,21 +97,57 @@ effect fn main() -> Unit = {
     let rows = int.clamp((float.to_int(room.1) - 2 * EDGE - height_for(0)) / ROW_H, 1, ROWS)
     window.anchor_layer([])!
     window.resize_layer(w, height_for(rows))!
+    window.set_ime(true)!
     let faces = fonts.system()!
+    render.set_measure((t, size) => canvas.measure(faces, draw.code_points(t), size))
     var query = ""
+    var field = draw.no_field()
     var sel = 0
     var shown = apps.filter(all, query)
-    window.present(render(faces, query, shown, sel, rows, frame()))!
+    var items = render.render(view(shown, sel, rows), window.extent().0, window.extent().1)
+    var dirty = true
+    // Where the pointer was last: a row is selected by moving onto it, not by
+    // the pointer resting where the launcher opened.
+    var pointer_at = (0.0 - 1.0, 0.0 - 1.0)
     var going = true
     while going {
+      if dirty then {
+        shown = apps.filter(all, query)
+        items = render.render(view(shown, sel, rows), window.extent().0, window.extent().1)
+        let p = draw.draw(frame(), faces, items, { ...field, typed: draw.code_points(query) }, draw.no_scroll())
+        window.present(p.canvas.px)!
+        // The candidate window opens beside the caret.
+        window.set_ime_area(p.caret_x, p.caret_y, 1.0, p.caret_h)!
+        dirty = false
+      } else ()
       going = window.pump(0 - 1)!
-      var changed = false
+      dirty = window.resized()
       var kind = window.next_event()
       while kind != window.NONE {
+        let under = render.hit(items, window.event_x(), window.event_y(), 0.0)
         if kind == window.TEXT then {
           query = query + string.from_codepoint(window.event_code())
           sel = 0
-          changed = true
+          dirty = true
+        } else if kind == window.COMPOSE then {
+          field = { ...field, compose: draw.code_points(window.event_text()), from: window.event_code(), to: window.event_end() }
+          dirty = true
+        } else if kind == window.MOUSE_MOVE then {
+          // The pointer, moved, selects the row it is over.
+          window.set_cursor(if under > 0 then window.Hand else window.Arrow)!
+          let at = (window.event_x(), window.event_y())
+          let moved = pointer_at.0 >= 0.0 and at != pointer_at
+          pointer_at = at
+          if moved and under > 0 and under - 1 != sel then {
+            sel = under - 1
+            dirty = true
+          } else ()
+        } else if kind == window.MOUSE_DOWN and window.event_code() == 0 and under > 0 then {
+          match list.get(shown, under - 1) {
+            some(app) => launch(app)!,
+            none => (),
+          }
+          going = false
         } else if kind == window.KEY then {
           let k = window.event_code()
           if k == window.KEY_ESCAPE then { going = false }
@@ -111,13 +155,13 @@ effect fn main() -> Unit = {
             let cs = string.chars(query)
             query = cs |> list.take(int.max(0, list.len(cs) - 1)) |> list.join("")
             sel = 0
-            changed = true
+            dirty = true
           } else if k == window.KEY_DOWN or k == window.KEY_TAB then {
             sel = int.min(sel + 1, int.max(0, int.min(rows, list.len(shown)) - 1))
-            changed = true
+            dirty = true
           } else if k == window.KEY_UP then {
             sel = int.max(0, sel - 1)
-            changed = true
+            dirty = true
           } else if k == window.KEY_ENTER then {
             match list.get(shown, sel) {
               some(app) => launch(app)!,
@@ -128,10 +172,6 @@ effect fn main() -> Unit = {
         } else ()
         kind = window.next_event()
       }
-      if (changed or window.resized()) and going then {
-        shown = apps.filter(all, query)
-        window.present(render(faces, query, shown, sel, rows, frame()))!
-      } else ()
     }
   } else {
     println("no layer-shell surface: needs a Wayland compositor with wlr-layer-shell (Hyprland, sway)")
