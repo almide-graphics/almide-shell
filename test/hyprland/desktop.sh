@@ -14,6 +14,14 @@ fi
 # Keys: ALT rather than SUPER, which a browser or VNC viewer keeps for itself.
 mkdir -p /home/u/.config/hypr
 cat > /home/u/.config/hypr/extra.conf <<'CONF'
+# vkms has a cursor plane, and a cursor there is missing from screencopy,
+# so from VNC: draw it into the frame instead. (Only here — a benchmark's
+# screenshot keeps the pointer out.)
+cursor {
+  no_hardware_cursors = true
+}
+env = XCURSOR_THEME,Adwaita
+env = XCURSOR_SIZE,24
 exec-once = /tmp/bar
 # The session bus starts after Hyprland does: name it.
 exec-once = env DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/xdg/bus /tmp/notifyd

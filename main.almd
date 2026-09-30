@@ -48,6 +48,10 @@ fn pointer_handler(p: bar.Piece, kind: Int, code: Int, dy: Float) -> String =
   else if kind == window.WHEEL and dy > 0.0 then p.on_scroll_down
   else ""
 
+/// Whether `p` does anything when clicked or scrolled.
+fn acts(p: bar.Piece) -> Bool =
+  p.on_click != "" or p.on_right_click != "" or p.on_scroll_up != "" or p.on_scroll_down != ""
+
 /// A frame for the bar: the window's pixels, drawn on in units.
 fn frame() -> canvas.Canvas = canvas.scaled(window.width(), window.height(), window.scale())
 
@@ -88,10 +92,14 @@ effect fn main() -> Unit = {
         } else ()
       } else ()
       // The pointer: the handler of the piece under it, for a click, a right
-      // click or a turn of the wheel.
+      // click or a turn of the wheel — and a hand over a piece that has one.
       var kind = window.next_event()
       while kind != window.NONE {
-        match bar.at(faces, next, window.extent().0, window.event_x()) {
+        let under = bar.at(faces, next, window.extent().0, window.event_x())
+        if kind == window.MOUSE_MOVE then {
+          window.set_cursor(match under { some(p) => if acts(p) then window.Hand else window.Arrow, none => window.Arrow })!
+        } else ()
+        match under {
           some(p) => {
             let handler = pointer_handler(p, kind, window.event_code(), window.event_dy())
             if handler != "" then { let _ = hypr.dispatch(handler) } else ()
