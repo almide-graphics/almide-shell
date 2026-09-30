@@ -16,4 +16,7 @@ ENV PATH=/root/.cargo/bin:$PATH
 # A cursor theme, for the pointer the compositor draws over a window.
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends adwaita-icon-theme \
     && rm -rf /var/lib/apt/lists/*
+# An input method — fcitx5 with Mozc — for Japanese over text-input-v3.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends fcitx5 fcitx5-mozc \
+    && rm -rf /var/lib/apt/lists/*
 RUN useradd -m -G video,render,input u
