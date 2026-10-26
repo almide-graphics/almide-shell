@@ -3,4 +3,9 @@ name = "almide_bar"
 version = "0.0.1"
 
 [dependencies]
-snaidhm = { path = "/snaidhm-copy" }
+snaidhm = { git = "https://github.com/almide-graphics/snaidhm.git" }
+
+# Dialect epoch 15 (#4093): a git dependency outside github.com/almide is fetched only
+# from an owner the root manifest trusts.
+[trust]
+owners = ["github.com/almide-graphics"]

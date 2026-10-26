@@ -13,6 +13,8 @@ T0=$(date +%s)
 stamp() { echo "t+$(( $(date +%s) - T0 ))s $1" >> /tmp/timing; }
 mkdir -p /snaidhm-copy && (cd /snaidhm && tar --exclude=./target -cf - . | (cd /snaidhm-copy && tar -xf -))
 mkdir -p /w && (cd /work && tar -cf - .) | (cd /w && tar -xf -)
+# The manifest names snaidhm's remote; build against the mounted checkout instead.
+[ -f /w/almide.toml ] && sed -i 's|^snaidhm = .*|snaidhm = { path = "/snaidhm-copy" }|' /w/almide.toml
 ALMIDE=/almide/build/release/almide
 # The virtual pointer, built once per snaidhm checkout.
 DRIVE=/almide/drive-$(cd /snaidhm && git rev-parse --short HEAD 2>/dev/null || echo local)-$(md5sum /snaidhm/examples/wayland/drive.almd | cut -c1-8)

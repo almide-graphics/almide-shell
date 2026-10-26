@@ -9,9 +9,9 @@
 // (`view`), laid out by ceangal and drawn on the CPU.
 
 import process
-import ceangal.cpu_draw as draw
-import ceangal.render as render
-import ceangal.view as v
+import self.ui.cpu_draw as draw
+import self.ui.render as render
+import self.ui.view as v
 import snaidhm.wayland.window as window
 import snaidhm.native.fonts as fonts
 import snaidhm.cpu.canvas as canvas
