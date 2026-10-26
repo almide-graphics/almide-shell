@@ -77,8 +77,8 @@ effect fn all() -> List[App] = {
 /// (its characters must appear in order). A match at the start or at a word
 /// start, and consecutive characters, score higher.
 fn score(query: String, name: String) -> Int = {
-  let q = string.chars(string.to_lower(query))
-  let s = string.chars(string.to_lower(name))
+  let q = string.to_list(string.to_lower(query))
+  let s = string.to_list(string.to_lower(name))
   let nq = list.len(q)
   let ns = list.len(s)
   if nq == 0 then 1

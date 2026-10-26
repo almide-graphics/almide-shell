@@ -7,8 +7,9 @@
 // ("workspace>>2", "createworkspace>>3", "activewindow>>kitty,~").
 
 import env
+import io
 import json
-import net
+import unix
 
 type Workspace = { id: Int, name: String, windows: Int, monitor: String }
 
@@ -31,26 +32,26 @@ effect fn dir() -> Result[String, String] = {
 
 /// Send `command` and return the whole reply.
 effect fn request(command: String) -> Result[String, String] = {
-  let fd = net.unix_connect("${dir()!}/.socket.sock")!
-  net.unix_send(fd, bytes.from_string(command), [])!
-  var reply = bytes.new(0)
+  let fd = unix.connect("${dir()!}/.socket.sock")!
+  unix.write_fds(fd, bytes.from_string(command), [])!
+  var reply = bytes.zeros(0)
   var more = true
   while more {
-    let got = net.unix_recv(fd, 65536)!
-    if bytes.len(got) == 0 then { more = false } else { reply = bytes.concat(reply, got) }
+    let got = io.read(fd, 65536)!
+    if bytes.len(got) == 0 then { more = false } else { reply = reply + got }
   }
-  net.unix_close(fd)!
+  io.close(fd)!
   ok(bytes.to_string_lossy(reply))
 }
 
-fn int_field(v: Value, key: String) -> Int = match value.field(v, key) {
-  ok(f) => value.as_int(f) ?? 0,
-  err(_) => 0,
+fn int_field(v: Value, key: String) -> Int = match value.get(v, key) {
+  some(f) => value.as_int(f) ?? 0,
+  none => 0,
 }
 
-fn string_field(v: Value, key: String) -> String = match value.field(v, key) {
-  ok(f) => value.as_string(f) ?? "",
-  err(_) => "",
+fn string_field(v: Value, key: String) -> String = match value.get(v, key) {
+  some(f) => value.as_string(f) ?? "",
+  none => "",
 }
 
 /// Every workspace, by id.
@@ -74,11 +75,11 @@ effect fn dispatch(args: String) -> Result[Unit, String] = {
 }
 
 /// Connect to the event stream; its descriptor, to wait on and `read_events`.
-effect fn events() -> Result[Int, String] = net.unix_connect("${dir()!}/.socket2.sock")
+effect fn events() -> Result[unix.Fd, String] = unix.connect("${dir()!}/.socket2.sock")
 
 /// The events that arrived on `fd` (call when it is readable).
-effect fn read_events(fd: Int) -> Result[List[Event], String] = {
-  let got = net.unix_recv(fd, 65536)!
+effect fn read_events(fd: unix.Fd) -> Result[List[Event], String] = {
+  let got = io.read(fd, 65536)!
   if bytes.len(got) == 0 then err("Hyprland closed its event socket")
   else {
     let text = partial + bytes.to_string_lossy(got)

@@ -59,7 +59,7 @@ effect fn change_brightness(base: String, delta: Int) -> Result[Light?, String] 
     none => ok(none),
     some(l) => {
       let level = stepped(l, delta)
-      match fs.write("${base}/${l.device}/brightness", int.to_string(level)) {
+      match fs.write_text("${base}/${l.device}/brightness", int.to_string(level)) {
         ok(_) => (),
         err(_) => {
           let _ = dbus.connect_system()!

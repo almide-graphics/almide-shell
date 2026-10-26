@@ -7,7 +7,7 @@
 // next tick, and the periodic reads (battery, volume, Command modules) are
 // all waited on in one poll, so an idle bar sleeps.
 
-import net
+import unix
 import snaidhm.wayland.window as window
 import snaidhm.native.fonts as fonts
 import snaidhm.cpu.canvas as canvas
@@ -52,7 +52,7 @@ effect fn main() -> Unit = {
   if window.open_layer("almide-bar", window.LAYER_TOP, anchors, 0, th.height, th.height, 0, 0)! then {
     let faces = fonts.system()!
     let zone = tz.system()!
-    let events = hypr.events() ?? (0 - 1)
+    let events = match hypr.events() { ok(f) => some(f), err(_) => none }
     let empty_ws: List[hypr.Workspace] = []
     let no_outputs: Map[String, String] = map.new()
     let cmds = commands()
@@ -72,16 +72,19 @@ effect fn main() -> Unit = {
       due = int.min(due, VOLUME_EVERY - t % VOLUME_EVERY)
       due = int.min(due, BATTERY_EVERY - t % BATTERY_EVERY)
       for c in cmds { due = int.min(due, c.1 - t % c.1) }
-      let fds = if events >= 0 then [window.fd(), events] else [window.fd()]
-      let ready = net.unix_wait(fds, due * 1000)!
+      let fds = [window.fd()] + option.to_list(events)
+      let ready = unix.select(fds, due * 1000)!
       going = window.pump(0)!
       var next = st
-      if events >= 0 and list.contains(ready, events) then {
-        let evs = hypr.read_events(events)!
-        if evs |> list.any((e) => string.contains(e.name, "workspace") or e.name == "focusedmon" or e.name == "openwindow" or e.name == "closewindow") then {
-          next = refresh_workspaces(next)!
-        } else ()
-      } else ()
+      match option.filter(events, (ev) => list.contains(ready, ev)) {
+        some(ev) => {
+          let evs = hypr.read_events(ev)!
+          if evs |> list.any((e) => string.contains(e.name, "workspace") or e.name == "focusedmon" or e.name == "openwindow" or e.name == "closewindow") then {
+            next = refresh_workspaces(next)!
+          } else ()
+        },
+        none => (),
+      }
       // Clicks: a workspace button switches to it.
       var kind = window.next_event()
       while kind != window.NONE {

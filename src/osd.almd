@@ -61,7 +61,7 @@ fn render(faces: List[sfnt.Font], l: Level, frame: canvas.Canvas) -> Bytes = {
   let y0 = h - 24.0
   let y1 = h - 16.0
   c = canvas.rect(c, pad, y0, w - pad, y1, 4.0, dim.0, dim.1, dim.2, 0.5)
-  let full = pad + (w - 2.0 * pad) * int.to_float(int.clamp(l.percent, 0, 100)) / 100.0
+  let full = pad + (w - 2.0 * pad) * float.from(int.clamp(l.percent, 0, 100)) / 100.0
   if l.percent > 0 then {
     c = canvas.rect(c, pad, y0, float.max(full, pad + 8.0), y1, 4.0, fill.0, fill.1, fill.2, 1.0)
   } else ()

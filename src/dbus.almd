@@ -13,7 +13,8 @@
 // D-Bus does ("s", "as", "a{sv}", "(ssss)").
 
 import env
-import net
+import io
+import unix
 
 type Arg =
   | Byte(Int)
@@ -108,7 +109,7 @@ fn type_end(sig: List[String], i: Int) -> Int = {
 
 /// The complete types of a signature, in order.
 fn split_types(sig: String) -> List[String] = {
-  let cs = string.chars(sig)
+  let cs = string.to_list(sig)
   let n = list.len(cs)
   var out: List[String] = []
   var i = 0
@@ -137,7 +138,7 @@ fn put_u32(b: Bytes, v: Int) -> Bytes = {
 fn put_string(b: Bytes, s: String) -> Bytes = {
   let raw = bytes.from_string(s)
   var out = put_u32(b, bytes.len(raw))
-  out = bytes.concat(out, raw)
+  out = out + raw
   bytes.push(out, 0)
   out
 }
@@ -183,7 +184,7 @@ fn put(b: Bytes, a: Arg) -> Bytes = match a {
   Signature(s) => {
     var out = b
     bytes.push(out, string.len(s))
-    out = bytes.concat(out, bytes.from_string(s))
+    out = out + bytes.from_string(s)
     bytes.push(out, 0)
     out
   },
@@ -195,7 +196,7 @@ fn put(b: Bytes, a: Arg) -> Bytes = match a {
     var out = start
     for it in items { out = put(out, it) }
     var fixed = out
-    bytes.set_u32_le(fixed, bytes.len(head) - 4, bytes.len(out) - bytes.len(start))
+    bytes.put_u32_le(fixed, bytes.len(head) - 4, bytes.len(out) - bytes.len(start))
     fixed
   },
   Struct(items) => {
@@ -222,13 +223,13 @@ fn encode(m: Message) -> Bytes = {
   if sig != "" then { list.push(fields, field(8, Signature(sig))) } else ()
   // The body is marshalled on its own, aligned from its own start (which
   // the header's padding puts on an 8-byte boundary).
-  var body = bytes.new(0)
+  var body = bytes.zeros(0)
   for a in m.body { body = put(body, a) }
   var head = bytes.from_list([108, m.kind, m.flags, 1])
   head = put_u32(head, bytes.len(body))
   head = put_u32(head, m.serial)
   head = put(head, Array("(yv)", fields))
-  bytes.concat(pad(head, 8), body)
+  pad(head, 8) + body
 }
 
 // ── Reading ──
@@ -238,26 +239,26 @@ fn get(b: Bytes, pos: Int, sig: String) -> (Arg, Int) = {
   let c = string.slice(sig, 0, 1)
   let at = (pos + align_of(c) - 1) / align_of(c) * align_of(c)
   match c {
-    "y" => (Byte(bytes.read_u8(b, at)), at + 1),
-    "b" => (Boolean(bytes.read_u32_le(b, at) != 0), at + 4),
-    "n" => (Int16(bytes.read_i16_le(b, at)), at + 2),
-    "q" => (UInt16(bytes.read_u16_le(b, at)), at + 2),
-    "i" => (Int32(bytes.read_i32_le(b, at)), at + 4),
-    "u" => (UInt32(bytes.read_u32_le(b, at)), at + 4),
-    "h" => (UInt32(bytes.read_u32_le(b, at)), at + 4),
-    "x" => (Int64(bytes.read_i64_le(b, at)), at + 8),
-    "t" => (UInt64(bytes.read_i64_le(b, at)), at + 8),
-    "d" => (Double(bytes.read_f64_le(b, at)), at + 8),
+    "y" => (Byte(bytes.get(b, at) ?? 0), at + 1),
+    "b" => (Boolean((bytes.get_u32_le(b, at) ?? 0) != 0), at + 4),
+    "n" => (Int16(bytes.get_i16_le(b, at) ?? 0), at + 2),
+    "q" => (UInt16(bytes.get_u16_le(b, at) ?? 0), at + 2),
+    "i" => (Int32(bytes.get_i32_le(b, at) ?? 0), at + 4),
+    "u" => (UInt32(bytes.get_u32_le(b, at) ?? 0), at + 4),
+    "h" => (UInt32(bytes.get_u32_le(b, at) ?? 0), at + 4),
+    "x" => (Int64(bytes.get_i64_le(b, at) ?? 0), at + 8),
+    "t" => (UInt64(bytes.get_i64_le(b, at) ?? 0), at + 8),
+    "d" => (Double(bytes.get_f64_le(b, at) ?? 0.0), at + 8),
     "s" => {
-      let len = bytes.read_u32_le(b, at)
+      let len = bytes.get_u32_le(b, at) ?? 0
       (Str(bytes.to_string_lossy(bytes.slice(b, at + 4, at + 4 + len))), at + 5 + len)
     },
     "o" => {
-      let len = bytes.read_u32_le(b, at)
+      let len = bytes.get_u32_le(b, at) ?? 0
       (Path(bytes.to_string_lossy(bytes.slice(b, at + 4, at + 4 + len))), at + 5 + len)
     },
     "g" => {
-      let len = bytes.read_u8(b, at)
+      let len = bytes.get(b, at) ?? 0
       (Signature(bytes.to_string_lossy(bytes.slice(b, at + 1, at + 1 + len))), at + 2 + len)
     },
     "v" => {
@@ -268,7 +269,7 @@ fn get(b: Bytes, pos: Int, sig: String) -> (Arg, Int) = {
     },
     "a" => {
       let elem = string.slice(sig, 1)
-      let len = bytes.read_u32_le(b, at)
+      let len = bytes.get_u32_le(b, at) ?? 0
       let ea = align_of(string.slice(elem, 0, 1))
       let start = (at + 4 + ea - 1) / ea * ea
       var items: List[Arg] = []
@@ -312,8 +313,8 @@ fn get_all(b: Bytes, pos: Int, sig: String) -> (List[Arg], Int) = {
 fn message_len(b: Bytes) -> Int = {
   if bytes.len(b) < 16 then 0
   else {
-    let body = bytes.read_u32_le(b, 4)
-    let fields = bytes.read_u32_le(b, 12)
+    let body = bytes.get_u32_le(b, 4) ?? 0
+    let fields = bytes.get_u32_le(b, 12) ?? 0
     let total = (16 + fields + 7) / 8 * 8 + body
     if bytes.len(b) >= total then total else 0
   }
@@ -344,7 +345,7 @@ fn int_of(a: Arg) -> Int = match a {
 /// sends).
 fn decode(b: Bytes) -> Message = {
   let fields = get(b, 12, "a(yv)")
-  var m = { ...message(bytes.read_u8(b, 1)), flags: bytes.read_u8(b, 2), serial: bytes.read_u32_le(b, 8) }
+  var m = { ...message(bytes.get(b, 1) ?? 0), flags: bytes.get(b, 2) ?? 0, serial: bytes.get_u32_le(b, 8) ?? 0 }
   match fields.0 {
     Array(_, items) => {
       for f in items {
@@ -376,9 +377,9 @@ fn decode(b: Bytes) -> Message = {
 
 // ── The connection ──
 
-var sock = 0 - 1
+var sock: Option[unix.Fd] = none
 var serial = 0
-var pending: Bytes = bytes.new(0)
+var pending: Bytes = bytes.zeros(0)
 var unique = ""
 
 /// The socket path in a bus address ("unix:path=/run/user/1000/bus,guid=...").
@@ -410,18 +411,18 @@ effect fn connect_system() -> Result[String, String] = {
 effect fn connect_to(path: String, address: String) -> Result[String, String] = {
   if path == "" then err("unsupported bus address: ${address}")
   else {
-    sock = net.unix_connect(path)!
+    sock = some(unix.connect(path)!)
     // SASL EXTERNAL with no initial response: the server asks (DATA), we
     // send none, and it takes our uid from the socket.
-    net.unix_send(sock, bytes.concat(bytes.from_list([0]), bytes.from_string("AUTH EXTERNAL\r\n")), [])!
+    unix.write_fds(fd(), bytes.from_list([0]) + bytes.from_string("AUTH EXTERNAL\r\n"), [])!
     let first = line()!
     if string.starts_with(first, "DATA") then {
-      net.unix_send(sock, bytes.from_string("DATA\r\n"), [])!
+      unix.write_fds(fd(), bytes.from_string("DATA\r\n"), [])!
     } else ()
     let answer = if string.starts_with(first, "OK") then first else line()!
     if not string.starts_with(answer, "OK") then err("D-Bus authentication refused: ${answer}")
     else {
-      net.unix_send(sock, bytes.from_string("BEGIN\r\n"), [])!
+      unix.write_fds(fd(), bytes.from_string("BEGIN\r\n"), [])!
       let reply = call("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "Hello", [])!
       unique = str_of(reply.body[0])
       ok(unique)
@@ -433,36 +434,42 @@ effect fn connect_to(path: String, address: String) -> Result[String, String] = 
 effect fn line() -> Result[String, String] = {
   var text = ""
   while not string.contains(text, "\r\n") {
-    let got = net.unix_recv(sock, 1)!
+    let got = io.read(fd(), 1)!
     if bytes.len(got) == 0 then { text = text + "\r\n" } else { text = text + bytes.to_string_lossy(got) }
   }
   ok(string.trim(text))
 }
 
-/// The connection's socket, to wait on beside others.
-fn fd() -> Int = sock
+/// The connection's socket, to wait on beside others. Aborts before `connect`.
+fn fd() -> unix.Fd = match sock {
+  some(s) => s,
+  none => panic("dbus: not connected"),
+}
 
 /// Send `m` with the next serial; that serial.
 effect fn send(m: Message) -> Result[Int, String] = {
   serial = serial + 1
-  net.unix_send(sock, encode({ ...m, serial: serial }), [])!
+  unix.write_fds(fd(), encode({ ...m, serial: serial }), [])!
   ok(serial)
 }
 
 /// Messages that have arrived (waiting up to `timeout_ms` for the first).
 effect fn read(timeout_ms: Int) -> Result[List[Message], String] = {
   var out: List[Message] = []
-  if net.unix_poll(sock, timeout_ms)! then {
-    let got = net.unix_recv(sock, 65536)!
-    if bytes.len(got) == 0 then { sock = 0 - 1 } else { pending = bytes.concat(pending, got) }
-  } else ()
+  match sock {
+    some(s) => if list.len(unix.select([s], timeout_ms)!) > 0 then {
+      let got = io.read(s, 65536)!
+      if bytes.len(got) == 0 then { sock = none } else { pending = pending + got }
+    } else (),
+    none => (),
+  }
   var n = message_len(pending)
   while n > 0 {
     list.push(out, decode(bytes.slice(pending, 0, n)))
     pending = bytes.slice(pending, n, bytes.len(pending))
     n = message_len(pending)
   }
-  if sock < 0 and list.len(out) == 0 then err("the bus closed the connection") else ok(out)
+  if option.is_none(sock) and list.len(out) == 0 then err("the bus closed the connection") else ok(out)
 }
 
 // Messages read while waiting for a reply, handed out by the next `read`s.

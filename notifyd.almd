@@ -8,7 +8,7 @@
 // top right, over windows, until it expires or is clicked.
 
 import env
-import net
+import unix
 import snaidhm.sfnt as sfnt
 import snaidhm.wayland.window as window
 import snaidhm.cpu.canvas as canvas
@@ -76,7 +76,7 @@ effect fn show(faces: List[sfnt.Font]) -> Result[Unit, String] = {
     if not window.shown() then {
       let _ = window.open_layer("almide-notifications", layer: window.Overlay,
         anchor: [window.TopEdge, window.RightEdge], width: notify.WIDTH, height: h, margin: notify.MARGIN)!
-    } else if window.extent().1 != int.to_float(h) then {
+    } else if window.extent().1 != float.from(h) then {
       window.resize_layer(notify.WIDTH, h)!
     } else ()
     window.present(notify.render(faces, notes, canvas.scaled(window.width(), window.height(), window.scale())))!
@@ -96,13 +96,13 @@ effect fn main() -> Unit = {
     // The Wayland connection opens with the first card.
     var shown_key = ""
     while true {
-      let now = env.millis()
+      let now = datetime.now_ms()
       // Sleep until a message, a click, or the next expiry.
       let due = notes |> list.filter_map((n) => if n.expires_at > 0 then some(n.expires_at - now) else none)
       let wait = match list.min(due) { some(d) => int.max(0, d), none => 0 - 1 }
       let fds = if window.shown() then [dbus.fd(), window.fd()] else [dbus.fd()]
-      let _ = net.unix_wait(fds, wait)!
-      let t = env.millis()
+      let _ = unix.select(fds, wait)!
+      let t = datetime.now_ms()
       for m in dbus.next(0)! { handle(m, t)! }
       if window.shown() then {
         let _ = window.pump(0)!

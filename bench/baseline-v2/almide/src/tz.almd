@@ -27,7 +27,7 @@ effect fn system() -> Zone = {
   let path = if name == "" then "/etc/localtime"
     else if string.starts_with(name, "/") then name
     else "/usr/share/zoneinfo/${if string.starts_with(name, ":") then string.slice(name, 1) else name}"
-  match fs.read_bytes_raw(path) {
+  match fs.read_bytes(path) {
     ok(data) => parse(data),
     err(_) => if name != "" and not string.contains(name, "/") then from_rule(name) else utc(),
   }
@@ -43,7 +43,7 @@ fn from_rule(text: String) -> Zone = {
 fn parse(b: Bytes) -> Zone = {
   if bytes.len(b) < 44 or bytes.to_string_lossy(bytes.slice(b, 0, 4)) != "TZif" then utc()
   else {
-    let version = bytes.read_u8(b, 4)
+    let version = bytes.get(b, 4) ?? 0
     let v1 = block_len(b, 0, 4)
     if version >= 0x32 then read_block(b, 44 + v1, 8) else read_block(b, 0, 4)
   }
@@ -51,35 +51,35 @@ fn parse(b: Bytes) -> Zone = {
 
 /// Length of the data block after the header at `h`, with `w`-byte times.
 fn block_len(b: Bytes, h: Int, w: Int) -> Int = {
-  let isut = bytes.read_u32_be(b, h + 20)
-  let isstd = bytes.read_u32_be(b, h + 24)
-  let leap = bytes.read_u32_be(b, h + 28)
-  let times = bytes.read_u32_be(b, h + 32)
-  let types = bytes.read_u32_be(b, h + 36)
-  let chars = bytes.read_u32_be(b, h + 40)
+  let isut = bytes.get_u32_be(b, h + 20) ?? 0
+  let isstd = bytes.get_u32_be(b, h + 24) ?? 0
+  let leap = bytes.get_u32_be(b, h + 28) ?? 0
+  let times = bytes.get_u32_be(b, h + 32) ?? 0
+  let types = bytes.get_u32_be(b, h + 36) ?? 0
+  let chars = bytes.get_u32_be(b, h + 40) ?? 0
   times * w + times + types * 6 + chars + leap * (w + 4) + isstd + isut
 }
 
 fn read_block(b: Bytes, h: Int, w: Int) -> Zone = {
-  let times = bytes.read_u32_be(b, h + 32)
-  let types = bytes.read_u32_be(b, h + 36)
+  let times = bytes.get_u32_be(b, h + 32) ?? 0
+  let types = bytes.get_u32_be(b, h + 36) ?? 0
   let data = h + 44
   let idx = data + times * w
   let info = idx + times
   var at: List[Int] = []
   var offset: List[Int] = []
   for i in 0..<times {
-    let t = if w == 8 then bytes.read_i64_be(b, data + i * 8) else bytes.read_i32_be(b, data + i * 4)
-    let k = bytes.read_u8(b, idx + i)
+    let t = if w == 8 then bytes.get_i64_be(b, data + i * 8) ?? 0 else bytes.get_i32_be(b, data + i * 4) ?? 0
+    let k = bytes.get(b, idx + i) ?? 0
     list.push(at, t)
-    list.push(offset, bytes.read_i32_be(b, info + k * 6))
+    list.push(offset, bytes.get_i32_be(b, info + k * 6) ?? 0)
   }
   // Before the first transition: the first standard-time type (else type 0).
-  var before = if types > 0 then bytes.read_i32_be(b, info) else 0
+  var before = if types > 0 then bytes.get_i32_be(b, info) ?? 0 else 0
   var found = false
   for k in 0..<types {
-    if not found and bytes.read_u8(b, info + k * 6 + 4) == 0 then {
-      before = bytes.read_i32_be(b, info + k * 6)
+    if not found and bytes.get(b, info + k * 6 + 4) ?? 0 == 0 then {
+      before = bytes.get_i32_be(b, info + k * 6) ?? 0
       found = true
     } else ()
   }
@@ -164,7 +164,7 @@ fn date_rule(cs: List[String], i: Int) -> (List[Int], Int) = {
 
 fn rule(text: String) -> Rule = {
   let empty: List[Int] = []
-  let cs = string.chars(text)
+  let cs = string.to_list(text)
   let n = list.len(cs)
   let after_std = skip_name(cs, 0)
   // POSIX offsets are hours WEST of UTC: "JST-9" is UTC+9.

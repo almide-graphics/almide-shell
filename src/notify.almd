@@ -19,12 +19,12 @@ let PAD = 14.0
 fn codes(s: String) -> List[Int] = bar.text_codes(s)
 
 /// A character of the scripts written without spaces between words.
-fn wide(c: String) -> Bool = (string.codepoint(c) ?? 0) >= 0x2E80
+fn wide(c: String) -> Bool = (string.to_codepoint(c) ?? 0) >= 0x2E80
 
 /// `text` broken into lines that fit `width` at `size` (at spaces; a word
 /// longer than the width, or text with no spaces — Japanese — at characters).
 fn wrap(faces: List[sfnt.Font], text: String, size: Float, width: Float) -> List[String] = {
-  let cs = string.chars(text)
+  let cs = string.to_list(text)
   let n = list.len(cs)
   var lines: List[String] = []
   var line = ""
@@ -63,12 +63,12 @@ fn wrap(faces: List[sfnt.Font], text: String, size: Float, width: Float) -> List
 }
 
 fn body_lines(faces: List[sfnt.Font], n: Note) -> List[String] =
-  if n.body == "" then [] else wrap(faces, n.body, config.THEME.font_size - 1.0, int.to_float(WIDTH) - 2.0 * PAD) |> list.take(4)
+  if n.body == "" then [] else wrap(faces, n.body, config.THEME.font_size - 1.0, float.from(WIDTH) - 2.0 * PAD) |> list.take(4)
 
 fn card_height(faces: List[sfnt.Font], n: Note) -> Int = {
   let th = config.THEME
   let line = th.font_size * 1.45
-  float.to_int(PAD * 2.0 + line + int.to_float(list.len(body_lines(faces, n))) * (th.font_size * 1.35))
+  int.from_saturating(PAD * 2.0 + line + float.from(list.len(body_lines(faces, n))) * (th.font_size * 1.35))
 }
 
 /// Height of the column for `notes`.
@@ -84,7 +84,7 @@ fn hit(faces: List[sfnt.Font], notes: List[Note], y: Float) -> Int = {
   var found = 0
   for n in notes {
     let h = card_height(faces, n)
-    if y >= int.to_float(top) and y < int.to_float(top + h) then { found = n.id } else ()
+    if y >= float.from(top) and y < float.from(top + h) then { found = n.id } else ()
     top = top + h + CARD_GAP
   }
   found
@@ -104,18 +104,18 @@ fn render(faces: List[sfnt.Font], notes: List[Note], frame: canvas.Canvas) -> By
   var top = 0.0
   let f = faces[0]
   for n in notes {
-    let ch = int.to_float(card_height(faces, n))
+    let ch = float.from(card_height(faces, n))
     c = canvas.rect(c, 0.0, top, width, top + ch, 10.0, bg.0, bg.1, bg.2, 0.96)
     c = canvas.rect(c, 0.0, top, 4.0, top + ch, 2.0, accent.0, accent.1, accent.2, 1.0)
-    let em = th.font_size / int.to_float(f.units_per_em)
-    let first = top + PAD + int.to_float(f.ascent) * em
+    let em = th.font_size / float.from(f.units_per_em)
+    let first = top + PAD + float.from(f.ascent) * em
     c = canvas.draw_text(c, faces, codes(n.summary), th.font_size, PAD, first, fg.0, fg.1, fg.2, 1.0)
     var y = first + th.font_size * 1.45
     for l in body_lines(faces, n) {
       c = canvas.draw_text(c, faces, codes(l), th.font_size - 1.0, PAD, y, dim.0 + 0.25, dim.1 + 0.25, dim.2 + 0.25, 1.0)
       y = y + th.font_size * 1.35
     }
-    top = top + ch + int.to_float(CARD_GAP)
+    top = top + ch + float.from(CARD_GAP)
   }
   c.px
 }

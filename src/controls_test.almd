@@ -8,8 +8,8 @@ effect fn backlight_fixture(name: String, level: Int, max: Int) -> String = {
   let base = "${fs.temp_dir()!}/almide-shell-bl-${name}"
   let _ = fs.remove_all(base)
   fs.mkdir_p("${base}/intel_backlight")!
-  fs.write("${base}/intel_backlight/brightness", "${int.to_string(level)}\n")!
-  fs.write("${base}/intel_backlight/max_brightness", "${int.to_string(max)}\n")!
+  fs.write_text("${base}/intel_backlight/brightness", "${int.to_string(level)}\n")!
+  fs.write_text("${base}/intel_backlight/max_brightness", "${int.to_string(max)}\n")!
   ok(base)
 }
 

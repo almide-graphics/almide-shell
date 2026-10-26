@@ -43,7 +43,7 @@ fn view(shown: List[apps.App], sel: Int, rows: Int) -> v.View = {
   let body = if list.len(shown) == 0 then [v.text("No matches") |> v.font(th.font_size) |> v.color(colour(th.dim)) |> v.px(14.0) |> v.py(12.0)]
              else listed
   v.col([
-    v.text_field("Search applications") |> v.font(th.font_size + 3.0) |> v.color(colour(th.foreground)) |> v.h(int.to_float(HEAD_H - 8)),
+    v.text_field("Search applications") |> v.font(th.font_size + 3.0) |> v.color(colour(th.foreground)) |> v.h(float.from(HEAD_H - 8)),
     v.col([]) |> v.h(1.0) |> v.mx(8.0) |> v.bg(colour(th.dim)) |> v.opacity(0.6),
     v.col(body) |> v.py(5.0),
   ])
@@ -64,7 +64,7 @@ fn app_row(a: apps.App, i: Int, selected: Bool) -> v.View = {
   |> v.gap(12.0)
   |> v.align(v.ALIGN_CENTER)
   |> v.px(14.0)
-  |> v.h(int.to_float(ROW_H - 4))
+  |> v.h(float.from(ROW_H - 4))
   |> v.my(2.0)
   |> v.rounded(8.0)
   |> v.bg(if selected then colour(th.accent) else v.transparent)
@@ -79,7 +79,7 @@ effect fn launch(app: apps.App) -> Result[Unit, String] = {
   match hypr.dispatch("exec ${app.exec}") {
     ok(_) => ok(()),
     err(_) => {
-      let _ = process.spawn("sh", ["-c", app.exec])!
+      let _ = process.start(process.ProcessCommand { cmd: "sh", args: ["-c", app.exec] })!
       ok(())
     },
   }
@@ -93,8 +93,8 @@ effect fn main() -> Unit = {
   if window.open_layer("almide-launcher", layer: window.Overlay,
     anchor: [window.TopEdge, window.BottomEdge, window.LeftEdge, window.RightEdge], keyboard: window.ExclusiveKeyboard)! then {
     let room = window.extent()
-    let w = int.min(WIDTH, float.to_int(room.0) - 2 * EDGE)
-    let rows = int.clamp((float.to_int(room.1) - 2 * EDGE - height_for(0)) / ROW_H, 1, ROWS)
+    let w = int.min(WIDTH, int.from_saturating(room.0) - 2 * EDGE)
+    let rows = int.clamp((int.from_saturating(room.1) - 2 * EDGE - height_for(0)) / ROW_H, 1, ROWS)
     window.anchor_layer([])!
     window.resize_layer(w, height_for(rows))!
     window.set_ime(true)!
@@ -126,7 +126,7 @@ effect fn main() -> Unit = {
       while kind != window.NONE {
         let under = render.hit(items, window.event_x(), window.event_y(), 0.0)
         if kind == window.TEXT then {
-          query = query + string.from_codepoint(window.event_code())
+          query = query + (string.from_codepoint(window.event_code()) ?? "")
           sel = 0
           dirty = true
         } else if kind == window.COMPOSE then {
@@ -152,7 +152,7 @@ effect fn main() -> Unit = {
           let k = window.event_code()
           if k == window.KEY_ESCAPE then { going = false }
           else if k == window.KEY_BACKSPACE then {
-            let cs = string.chars(query)
+            let cs = string.to_list(query)
             query = cs |> list.take(int.max(0, list.len(cs) - 1)) |> list.join("")
             sel = 0
             dirty = true
