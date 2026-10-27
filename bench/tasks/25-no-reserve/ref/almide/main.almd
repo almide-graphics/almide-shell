@@ -44,8 +44,8 @@ fn frame() -> canvas.Canvas = canvas.scaled(window.width(), window.height(), win
 
 effect fn main() -> Unit = {
   let th = config.THEME
-  let anchors = int.bor(int.bor(window.ANCHOR_TOP, window.ANCHOR_LEFT), window.ANCHOR_RIGHT)
-  if window.open_layer("almide-bar", window.LAYER_TOP, anchors, 0, th.height, 0, 0, 0)! then {
+  let anchors = [window.TopEdge, window.LeftEdge, window.RightEdge]
+  if window.open_layer("almide-bar", layer: window.Top, anchor: anchors, height: th.height, exclusive: 0)! then {
     let faces = fonts.system()!
     let zone = tz.system()!
     let events = match hypr.events() { ok(f) => some(f), err(_) => none }
