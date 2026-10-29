@@ -193,16 +193,13 @@ fn put(b: Bytes, a: Arg) -> Bytes = match a {
     // first one.
     let head = put_u32(b, 0)
     let start = pad(head, align_of(string.slice(elem, 0, 1)))
-    var out = start
-    for it in items { out = put(out, it) }
+    let out = items |> list.fold(start, (acc, it) => put(acc, it))
     var fixed = out
     bytes.put_u32_le(fixed, bytes.len(head) - 4, bytes.len(out) - bytes.len(start))
     fixed
   },
   Struct(items) => {
-    var out = pad(b, 8)
-    for it in items { out = put(out, it) }
-    out
+    items |> list.fold(pad(b, 8), (acc, it) => put(acc, it))
   },
   DictEntry(k, v) => put(put(pad(b, 8), k), v),
   Variant(inner) => put(put(b, Signature(signature(inner))), inner),

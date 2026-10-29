@@ -7,7 +7,6 @@
 // NotificationClosed signal) and shows each notification as a card at the
 // top right, over windows, until it expires or is clicked.
 
-import env
 import unix
 import snaidhm.sfnt as sfnt
 import snaidhm.wayland.window as window
