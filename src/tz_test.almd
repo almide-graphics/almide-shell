@@ -4,7 +4,7 @@
 
 import self.tz as tz
 
-fn at(y: Int, m: Int, d: Int, h: Int, min: Int) -> Int = datetime.from_parts(y, m, d, h, min, 0)
+fn at(y: Int, m: Int, d: Int, h: Int, min: Int) -> Int = datetime.from_parts(y, m, d, h, min, 0) ?? 0
 
 test "a fixed offset: POSIX signs are west of UTC" {
   let z = tz.from_rule("JST-9")

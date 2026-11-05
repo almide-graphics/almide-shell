@@ -38,7 +38,7 @@ effect fn volume() -> Sound? = {
       if list.len(parts) < 2 then none
       else {
         let v = float.parse(parts[1]) ?? 0.0
-        some({ percent: float.to_int(float.round(v * 100.0)), muted: string.contains(out, "MUTED") })
+        some({ percent: int.from_saturating(float.round(v * 100.0)), muted: string.contains(out, "MUTED") })
       }
     },
   }

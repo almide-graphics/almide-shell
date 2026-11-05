@@ -16,8 +16,9 @@
 
 import env
 import fs
+import io
 import process
-import net
+import unix
 import snaidhm.wayland.window as window
 import snaidhm.native.fonts as fonts
 import snaidhm.cpu.canvas as canvas
@@ -84,7 +85,7 @@ effect fn serve(first: osd.Command?) -> Result[Unit, String] = {
   let path = socket_path()!
   // A socket left by a daemon that did not exit cleanly.
   let _ = fs.remove(path)
-  let listener = net.unix_listen(path)!
+  let listener = unix.listen(path)!
   let faces = fonts.system()!
   var shown: osd.Level? = none
   var hide_at = 0 - 1
@@ -94,23 +95,23 @@ effect fn serve(first: osd.Command?) -> Result[Unit, String] = {
       some(l) => {
         show(faces, l)!
         shown = some(l)
-        hide_at = env.millis() + osd.SHOW_MS
+        hide_at = datetime.now_ms() + osd.SHOW_MS
       },
       none => (),
     }
     level = none
-    let wait = if hide_at < 0 then 0 - 1 else int.max(0, hide_at - env.millis())
+    let wait = if hide_at < 0 then 0 - 1 else int.max(0, hide_at - datetime.now_ms())
     let fds = if window.shown() then [listener, window.fd()] else [listener]
-    let ready = net.unix_wait(fds, wait)!
+    let ready = unix.select(fds, wait)!
     if list.contains(ready, listener) then {
-      let conn = net.unix_accept(listener)!
-      if net.unix_poll(conn, 200)! then {
-        let text = bytes.to_string_lossy(net.unix_recv(conn, 256)!)
+      let conn = unix.accept(listener)!
+      if list.len(unix.select([conn], 200)!) > 0 then {
+        let text = bytes.to_string_lossy(io.read(conn, 256)!)
         level = run(string.lines(text) |> list.filter_map((line) => osd.parse(line)))!
         // Done: the sender may read the new state now.
-        let _ = net.unix_send(conn, bytes.from_string("ok\n"), [])
+        let _ = unix.write_fds(conn, bytes.from_string("ok\n"), [])
       } else ()
-      net.unix_close(conn)!
+      io.close(conn)!
     } else ()
     if window.shown() then {
       let _ = window.pump(0)!
@@ -120,7 +121,7 @@ effect fn serve(first: osd.Command?) -> Result[Unit, String] = {
         none => (),
       }
     } else ()
-    if hide_at >= 0 and env.millis() >= hide_at then {
+    if hide_at >= 0 and datetime.now_ms() >= hide_at then {
       if window.shown() then window.hide()! else ()
       hide_at = 0 - 1
       shown = none
@@ -138,14 +139,14 @@ effect fn main() -> Unit = {
     process.exit(2)
   } else ()
   // Hand the command to a daemon that is already up; else become it.
-  match net.unix_connect(socket_path()!) {
+  match unix.connect(socket_path()!) {
     ok(sock) => {
       if cmd != none then {
-        net.unix_send(sock, bytes.from_string("${text}\n"), [])!
+        unix.write_fds(sock, bytes.from_string("${text}\n"), [])!
         // Return once the daemon has carried it out.
-        if net.unix_poll(sock, 2000)! then { let _ = net.unix_recv(sock, 16)! } else ()
+        if list.len(unix.select([sock], 2000)!) > 0 then { let _ = io.read(sock, 16)! } else ()
       } else ()
-      net.unix_close(sock)!
+      io.close(sock)!
     },
     err(_) => serve(cmd)!,
   }

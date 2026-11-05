@@ -7,7 +7,7 @@ import self.tz as tz
 
 effect fn main() -> Unit = {
   let args = env.args()
-  let z = tz.parse(fs.read_bytes_raw(args[0])!)
+  let z = tz.parse(fs.read_bytes(args[0])!)
   let ts = list.drop(args, 1)
   let n = list.len(ts)
   for i in 0..<n { println(int.to_string(tz.offset_at(z, int.parse(ts[i]) ?? 0))) }

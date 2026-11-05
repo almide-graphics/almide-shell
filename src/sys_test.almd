@@ -9,8 +9,8 @@ effect fn fixture(name: String, bat: String, capacity: String, status: String) -
   fs.mkdir_p("${base}/AC")!
   if bat != "" then {
     fs.mkdir_p("${base}/${bat}")!
-    fs.write("${base}/${bat}/capacity", capacity)!
-    fs.write("${base}/${bat}/status", status)!
+    fs.write_text("${base}/${bat}/capacity", capacity)!
+    fs.write_text("${base}/${bat}/status", status)!
   } else ()
   ok(base)
 }

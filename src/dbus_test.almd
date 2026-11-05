@@ -13,14 +13,14 @@ test "signatures" {
 
 test "alignment counts from the message start" {
   // A byte, then a u32: three bytes of padding.
-  let b = dbus.put(dbus.put(bytes.new(0), dbus.Byte(7)), dbus.UInt32(0x01020304))
+  let b = dbus.put(dbus.put(bytes.zeros(0), dbus.Byte(7)), dbus.UInt32(0x01020304))
   assert_eq(bytes.to_list(b), [7, 0, 0, 0, 4, 3, 2, 1])
   // A string: its length, its bytes, a NUL.
-  assert_eq(bytes.to_list(dbus.put(bytes.new(0), dbus.Str("hi"))), [2, 0, 0, 0, 104, 105, 0])
+  assert_eq(bytes.to_list(dbus.put(bytes.zeros(0), dbus.Str("hi"))), [2, 0, 0, 0, 104, 105, 0])
   // An array of int64 after a u32: the length excludes the padding to 8.
-  let a = dbus.put(bytes.new(0), dbus.Array("x", [dbus.Int64(1)]))
+  let a = dbus.put(bytes.zeros(0), dbus.Array("x", [dbus.Int64(1)]))
   assert_eq(bytes.len(a), 16)
-  assert_eq(bytes.read_u32_le(a, 0), 8)
+  assert_eq(bytes.get_u32_le(a, 0) ?? 0, 8)
 }
 
 test "a Notify call round-trips" {

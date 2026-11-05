@@ -32,7 +32,7 @@ type Placed = { piece: Piece, x: Float, w: Float }
 
 fn piece(text: String, color: String) -> Piece = { text: text, color: color, boxed: false, action: "" }
 
-fn hex(s: String, at: Int) -> Float = int.to_float(int.from_hex(string.slice(s, at, at + 2)) ?? 0) / 255.0
+fn hex(s: String, at: Int) -> Float = float.from(int.parse_radix(string.slice(s, at, at + 2), 16) ?? 0) / 255.0
 
 /// "#rrggbb[aa]" as (r, g, b, a).
 fn rgba(s: String) -> (Float, Float, Float, Float) =
@@ -80,10 +80,10 @@ fn width_of(faces: List[sfnt.Font], p: Piece) -> Float = {
 }
 
 fn text_codes(s: String) -> List[Int] = {
-  let cs = string.chars(s)
+  let cs = string.to_list(s)
   let n = list.len(cs)
   var out: List[Int] = []
-  for i in 0..<n { list.push(out, string.codepoint(cs[i]) ?? 0) }
+  for i in 0..<n { list.push(out, string.to_codepoint(cs[i]) ?? 0) }
   out
 }
 
@@ -125,9 +125,9 @@ fn render(faces: List[sfnt.Font], st: State, frame: canvas.Canvas) -> Bytes = {
   var c = frame
   c = canvas.clear(c, bg.0, bg.1, bg.2)
   let f = faces[0]
-  let em = th.font_size / int.to_float(f.units_per_em)
-  let ascent = int.to_float(f.ascent) * em
-  let descent = 0.0 - int.to_float(f.descent) * em
+  let em = th.font_size / float.from(f.units_per_em)
+  let ascent = float.from(f.ascent) * em
+  let descent = 0.0 - float.from(f.descent) * em
   let baseline = height / 2.0 + (ascent - descent) / 2.0
   let placed = layout(faces, st, width)
   let n = list.len(placed)
